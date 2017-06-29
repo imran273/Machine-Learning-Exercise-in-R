@@ -1,0 +1,46 @@
+---
+title: "ML_Homework1"
+author: "John Navarro"
+date: "June 23, 2017"
+output: pdf_document
+---
+Data for the project are contained in two files: test_sample_X.csv and test_sample_Y.csv.
+File test_sample_X.csv has 500 columns X1,X2,.,X500 of regressors. The corresponding column names are: X1, X2,., X500.
+
+File test_sample_Y.csv contains 499 columns of dependent variables Y2,Y3,.,Y500Y2,Y3,.,Y500 with column names Y2, Y3,., Y500.
+
+Each column Yj is the dependent variable of model mj with j regressors X1,X2,.,Xj
+For example, second column Y3 is the dependent variable of the following model m3 with columns of predictors X1, X2, X3:
+Y3=??0+??1X1+??2X2+??3X3+??.
+
+These data are structured as in workshop 1 of this week.
+
+Download your sample from left sidebar unpack and read it.
+```{r}
+dataPath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week1_Regression_MLE"
+test_data_regressors <- read.table(paste(dataPath,'test_sample_X.csv',sep = '/'), header=TRUE)
+test_data_outputs <- read.table(paste(dataPath,'test_sample_Y.csv',sep = '/'), header=TRUE)
+
+```
+
+For each j=2,3,…,490 fit linear model mjmj.
+For each mj, j=2,3,…,490 calculate 95% confidence interval for slope β1 of predictor  X1
+Create two-column matrix intervals with 489 rows in which row j contains confidence interval of coefficient1β1 in model mj+1.
+
+Create data frame res of two variables left and right
+
+```{r}
+left<-suppressWarnings(sapply(2:490,function(z) confint(lm(Y~.,data=data.frame(Y=test_data_outputs[,z-1],test_data_regressors[,1:z])))[2,1]))
+
+right<-suppressWarnings(sapply(2:490,function(z) confint(lm(Y~.,data=data.frame(Y=test_data_outputs[,z-1],test_data_regressors[,1:z])))[2,2]))
+
+# Create a matrix called intervals
+intervals <- as.matrix(cbind(left, right))
+
+# Create a dataframe "res", each row represents the left and right conf interval of each model
+res<-data.frame(left=intervals[,1],right=intervals[,2])
+
+# Save to a .csv file
+write.csv(res,file=paste(dataPath,"W1answer.csv",sep="/"),row.names = F,quote=F)
+```
+
