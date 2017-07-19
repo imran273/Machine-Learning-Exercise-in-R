@@ -1,0 +1,428 @@
+---
+title: "MLworkshop3"
+author: "John Navarro"
+date: "July 7, 2017"
+output: pdf_document
+---
+
+###1 Regularization
+find min
+add noise
+
+ideal regularizator
+selection of lambda
+```{r}
+# Create a parabolic function
+X<-seq(0,5,length=100)
+Y<-.5-1.5*X+.4*X^2
+plot(X,Y,type="l")
+# Calculate the actual minimum
+(act.min<-X[which.min(Y)])
+# Add noise to the function
+set.seed(9)
+Eps<-rnorm(length(X),0,.05)
+Y.noise<-Y+Eps
+plot(X,Y.noise)
+# Calculate the new minimum
+(obs.min <- X[which.min(Y.noise)])
+# Apply ideal regularizator to make search for min more stable
+regularizator <-  0.5-1.5*X+.4*X^2
+# select tuning parameter lambda
+tune<-.3
+#Plot the Y.noise, reg*lambda, the sum of both
+matplot(X,cbind(Y.noise,regularizator*tune,Y.noise+regularizator*tune),type="l",lty=1,ylab="Y & Regularizator")
+(reg.min.3 <- X[which.min(Y.noise+regularizator*tune)])
+# Increase tuning parameter to 1
+tune <- 1
+matplot(X,cbind(Y.noise,regularizator*tune,Y.noise+regularizator*tune),type="l",lty=1,ylab="Y & Regularizator")
+(reg.min.1.0 <- X[which.min(Y.noise+regularizator*tune)])
+# Increase tuning paramater to 3
+tune <- 3
+matplot(X,cbind(Y.noise,regularizator*tune,Y.noise+regularizator*tune),type="l",lty=1,ylab="Y & Regularizator")
+(reg.min.2.0<-X[which.min(Y.noise+regularizator*tune)])
+```
+Keep increasing the tuning parameter, to get true min
+
+Try using a non ideal regularizator
+```{r}
+biasedRegularizator<-.5-1.5*X+.3*X^2
+matplot(X,cbind(Y,biasedRegularizator),type="l",lty=1,ylab="Y & Regularizator")
+matplot(X,cbind(Y.noise,biasedRegularizator*tune,Y.noise+biasedRegularizator*tune),type="l",lty=1,ylab="Y & Regularizator")
+(biasedReg.min.2.0<-X[which.min(Y.noise+biasedRegularizator*tune)])
+```
+
+Using the non ideal regularizator function gives the wrong min. 
+Needs to be located correctly, misleading if its not located correctly
+
+### 2. Lasso Regretion
+ESL, 
+lpsa is the response, 
+train is T/F if it is in training set
+normalize data
+```{r}
+suppressWarnings(library(glmnet))
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week3_Shrinkage_Ridge_Lasso"
+prostateData<-read.csv(file=paste(datapath,"prostatedata2.csv",sep="/"))
+head(prostateData)
+dim(prostateData)
+# normalize the input data
+prostateData.norm<-prostateData
+prostateData.norm[,1:8]<-apply(prostateData.norm[,-c(9,10)],2,function(z) z/sd(z))
+# check that sd of each column =1
+apply(prostateData.norm[,1:8],2, function(z) sd(z))
+# Separate into train and test sets
+prostateData.norm.train<-prostateData.norm[prostateData.norm$train,]
+head(prostateData.norm.train)
+dim(prostateData.norm.train) # 67x10
+prostateData.norm.test <- prostateData.norm[!prostateData.norm$train,]
+dim(prostateData.norm.test) #30x10
+```
+
+### 2.1.2 fitting linear model
+```{r}
+allPredictors.lm <- lm(lpsa~., data=prostateData.norm.train[,-10])
+summary(allPredictors.lm)
+```
+Several significant predictors and two barely significant predictors.
+Check correlation between predictors
+Low adj r sqd says there is redundancy in the predictors
+```{r}
+pairs(prostateData.norm.train[,-c(10)])
+cor(prostateData.norm.train[,-c(9,10)])
+```
+some are strong, >0.60
+look at R squareds
+```{r}
+cor(prostateData.norm.train[,-c(9,10)])^2
+```
+R^2 >0.5
+```{r}
+cor(prostateData.norm.train[,-c(9,10)])^2>.5
+```
+There is ony onr2 abouve 0.5, 3 in the 0.40s, not nearly as many predictors are significant as the first linear model told us.
+conclusion: some correlation skews significance of predictors
+```{r}
+summary(allPredictors.lm)$coefficients[,4]>.05 #all: age, lcp, gleason, pgg4
+# But after the removeal of lcp, svi become insignificant
+nolcp.lm<-lm(lpsa~lcavol+lweight+age+lbph+svi+gleason+pgg45,data=prostateData.norm.train[,-10])
+summary(nolcp.lm)$coefficients[,4]>.05 #no lcp: age, svi,gleason, pgg45
+```
+Consider removing all insignificant predictors: age, lcp, gleason and pgg45
+We can test significance of groups of predictors by using F-stat
+where RSS1 is from the bigger model, RSS0 is the model that has only p0+1 parameters not equal to zero and the rest p1-p0 are equal to zero
+```{r}
+significantPredictors.lm <- lm(lpsa~lcavol+lweight+lbph+svi,data=prostateData.norm.train[,-10])
+(RSS1 <- sum(allPredictors.lm$residuals^2))
+(RSS0 <- sum(significantPredictors.lm$residuals^2))
+(statisticF <- (RSS0-RSS1)/(8-4)/RSS1*(67-8-1))
+1-pf(statisticF,4,67-9)
+```
+This shows that the p-value is large and H0 cannot be rejected
+Check assumptions ofthemodel and MSE of prediction of lm
+```{r}
+summary(significantPredictors.lm)
+# Note that lbph is not significant with 5% level
+# Take a look at the residuals
+plot(significantPredictors.lm$residuals)
+hist(significantPredictors.lm$residuals)
+qqnorm(significantPredictors.lm$residuals)
+qqline(significantPredictors.lm$residuals)
+# assumptions of linear model are not satisfied
+# Compare AICs
+cbind(Signif=AIC(significantPredictors.lm),All=AIC(allPredictors.lm))
+# Mean square prediction error
+testPredict <- predict(significantPredictors.lm, newdata=prostateData.norm.test[,-c(3,6,7,8,9,10)])
+testOutput <- prostateData.norm.test$lpsa
+(MSE.significantPredictors<-mean((testOutput-testPredict)^2))
+testPredict.mean=mean(prostateData.norm.train$lpsa)
+(MSE.meanPredictor<-mean((testOutput-testPredict.mean)^2))
+```
+
+Plotting residuals, is there heteroskedasticity, histogram , long tail on left
+qqplot bad
+dont trust linear model, look at AIC comparisons and meansquare prediction error, we show that the model with only significant predictors is better than the model with all predictors
+
+### 2.1.3 Lasso regression model
+
+only takes matrices
+```{r}
+X <- data.matrix(prostateData.norm.train[,1:8])
+Y <- prostateData.norm.train[,9]
+```
+Fit lasso regression model to train data
+alpha=1 lasso, alpha=0 is ridge, lambda tuning parameter, # of lambdas tried
+lambda min ratio, smallest to largest, standardize f, already did it
+```{r}
+lassoProstate=glmnet(x=X,y=Y,alpha = 1,nlambda = 100,lambda.min.ratio = .0001, standardize = F)
+names(lassoProstate)
+head(cbind(DF=lassoProstate$df, DevExpected=lassoProstate$dev.ratio, Lambda=lassoProstate$lambda))
+```
+
+Parameter $df is # of active predictors, devExpected shows the dev.ratio, what is % of deviance explained for each lambda value
+
+This table helps decide which lambda to use
+The smaller the lambda, the higher deviance portion explained, 
+```{r}
+plot(lassoProstate$lambda, lassoProstate$dev.ratio, type="l")
+```
+this plot shows how explained deviance(%) grows as lambda becomes smaller
+```{r}
+plot(lassoProstate,col=c("black","red","blue","green","cyan","purple","magenta","gold"),lwd=2)
+abline(h=0)
+legend("topleft",legend=c("lcavol","lweight","age","lbph","svi","lcp","gleason","pgg45"),
+       col=c("black","red","blue","green","cyan","purple","magenta","gold"),lty=1,lwd=2,cex=.7)
+```
+
+This plot is a survival sequence of different slopes, not all go out simultaneously
+L1 Norm goes to 0, gleason is first to be eliminated as diamond is large, 
+when diamond shrinks, L1 Norm moves to the left(smaller) on the chart
+LCAVOL was last to survive
+
+Next, use cross validation to find the best level of lambda
+```{r}
+set.seed(15)
+cv.out=cv.glmnet(x=X,y=Y,alpha=1)
+plot(cv.out)
+```
+
+red dots are MSEs, each one has CI, check dist between minimum and 1 sd, 
+accuracy of identifying lambda of smallest MSE  is wide. Choice of lambdais not very accurate, which gives minimum, how quickly MSE declines
+
+small lambda means you are just looking at least squares, not using regularization
+```{r}
+(bestlam=cv.out$lambda.min)
+# Predict the output of the  test sample using the model fitted to the train sample and calculate mean square prediction error.
+lasso.pred=predict(lassoProstate, s=bestlam, newx=data.matrix(prostateData.norm.test[,1:8]))
+                                               
+(MSE.lasso <- mean((lasso.pred - testOutput)^2))   
+# Finally, use the best lambda to fit the model to the entire sample
+out=glmnet(x=as.matrix(prostateData.norm[,1:8]),y=as.vector(prostateData[,9]),alpha=1, lambda=bestlam, standardize=F)
+```
+
+
+compare lasso coefficents to lin model coeff, seems to be good correspondence
+```{r}
+lasso.coef <- predict(lassoProstate, type="coefficients",s=bestlam)
+cbind(Lasso=lasso.coef, LM=as.vector(allPredictors.lm$coefficients))
+# Compare MSPE
+c(Null=MSE.meanPredictor, Linear=MSE.significantPredictors,Lasso=MSE.lasso)
+```
+
+#### 2.1.4 PCA
+
+Apply the PCA method to the same data
+
+```{r}
+pca <- princomp(prostateData.norm.train[,1:8])
+factorloadings <- pca$loadings
+factorscores <- pca$scores
+#combine into data frame
+pca.data <- data.frame(Y=prostateData.norm.train[,9], factorscores)
+summary(pca)
+
+# Fit Linear Model
+model.PCA <- lm(Y~., data=pca.data)
+
+# Calculate rel. imp. of the factors for explaining the response using measure first
+metrics.first.PCA <- calc.relimp(model.PCA, type="first")
+
+# Check that the sum of rel. imp. measures for all predictors is the same as the 
+# determination coeff of the lm w/ the original predictors m490
+#c(sumMetrics.first=sum(metrics.first.PCA@first), m490.rsquared=summary(m490)$r.squared)
+
+# Re order PCA factors using rel imp measure first
+# rank the factors according to rel importance by first
+metrics.first.PCA.rank <- metrics.first.PCA@first.rank
+orderedFactors <- factorscores[,order(metrics.first.PCA.rank)]
+# return the name of orderedfactors
+(colnames(orderedFactors))
+# order the loadings
+orderedloadings <- factorloadings[,order(metrics.first.PCA.rank)]
+dim(orderedloadings)
+# Plot the diagram for selection of number of reordered predictors for a given determination coefficient
+# Create a new data frame with Y and Ordered factors
+orderedPCAData <- data.frame(Y=prostateData.norm.train[,9],orderedFactors)
+head(orderedPCAData[,1:7])
+dim(orderedPCAData) # 67x9
+colnames(orderedPCAData)
+# Calculate the R2 from nested regressions
+orderR2<-sapply(2:9,function(z) summary(lm(Y~.,data=orderedPCAData[,1:z]))$r.squared)
+orderR2
+# Plot Improvement of fit with # of predictors
+plot(orderR2,type="l",xlab="Number of Ordered PCA Factors")
+# Run linear model with top 5 factors
+PCA.5.lm <- lm(Y~.,data=data.frame(Y=prostateData.norm.train[,9], X=orderedPCAData[,2:6]))
+summary(PCA.5.lm)
+# restore the slopes by multiplying the loadings by PCA 5 coefficients
+restoredslopes <- orderedloadings[,1:5]%*%PCA.5.lm$coefficients[2:6]
+restoredslopes
+
+```
+
+## 3 Ridge and Lasso
+
+### 3.1 Simulation of the data
+```{r}
+set.seed(8394756)
+Epsilon<-rnorm(500,0,1)
+X<-rnorm(500*500,0,2)
+dim(X)<-c(500,500)
+colnames(X)<-paste0("X",1:500)
+slopesSet<-runif(500,-.1,3)
+Y<-sapply(2:500,function(z) 1+X[,1:z]%*%slopesSet[1:z]+Epsilon)
+head(X[,1:5])
+```
+### 3.2 Fitting linear models
+```{r}
+# Fit linear models with the first 10 predictors
+m10 <- lm(Y~.,data=data.frame(Y=Y[,9],X[,1:10]))
+# Fit linear model with 491 predictors
+completeModelDataFrame <- data.frame(Y=Y[,490],X[,1:491])
+m490 <- lm(Y~., data=completeModelDataFrame)
+```
+
+### 3.3 Ridge Regressions
+ 
+Apply ridge regression to the data with 10 predictors
+```{r}
+ridge10 <- glmnet(x=X[,1:10],y=Y[,9],alpha=0, nlambda=200,lambda.min.ratio=.0001,standardize = F)
+names(ridge10)
+# Separate int train and test
+set.seed(1)
+train=sample (1:nrow(X[,1:10]), nrow(X[,1:10])/2)
+test=(-train)
+y.test=Y[test,9]
+# Select the best lambda using cross vaildatoin on training set
+set.seed(5)
+cv.out=cv.glmnet(x=X[train,1:10], Y[train,9],alpha=0)
+plot(cv.out)
+# select the best lambda
+(bestlam <- cv.out$lambda.min)
+# Calculate mspe for best lambda
+bestlam <- 0.7083124
+ridge.pred=predict(ridge10,s=bestlam,newx=X[test,1:10]) 
+(ridge.MSE<-mean((ridge.pred-y.test)^2))
+```
+# compare the MSPred error
+```{r}
+train.m10 <- lm(Y~.,data=data.frame(Y=Y[train,9],X[train,1:10]))
+lm.pred <- predict(train.m10,newdata=as.data.frame(X[test,1:10]))
+(lm.MSE <- mean((lm.pred-y.test)^2))
+```
+Ridge regression did not select predictors. It is expected bc we simulated all predictors to be significant. Ridge regression made a small improvement to mean squared prediction error. This is consistent with expectation bec it has one additional parameter.
+Regularization is expected to reduce # of predictors when there are collinear(highly correlated) predictors
+Predictors in this example are not collinear
+
+###3.4 Lasso regression
+Fit lasso regression to the first 10 predictors
+```{r}
+# Fit lasso model to trainingset
+lasso10 <- glmnet(x=data.matrix(X[train,1:10]),y=Y[train,9],alpha=1,nlambda=100,lambda.min.ratio=.0001)
+# Plot survival sequence
+plot(lasso10)
+abline(h=0)
+# Use cross validation to find the min lambda
+set.seed(1)
+cv.out=cv.glmnet(x=X[train,1:10],y=Y[train,9],alpha=1)
+plot(cv.out)
+# Return best lambda
+(bestlam=cv.out$lambda.min)
+# Predict on the test set
+lasso.pred=predict(lasso10,s=bestlam,newx = X[test,1:10])
+# Evalute model performance with MSE
+(lasso.MSE <- mean((lasso.pred - y.test)^2))
+# Now fit the model to the entire data
+out=glmnet(x=X[,1:10],y=Y[,9], alpha = 1,nlambda=100,lambda.min.ratio = .0001)
+# Extract coefficients of the 10 predictors
+lasso.coef <- predict(out,type="coefficients",s=bestlam)
+# Display coefficients from Lasso Model, Linear Model and Actual slopes
+cbind(Lasso =lasso.coef, LM=as.vector(m10$coefficients),Actual=c(1,slopesSet[1:10]))
+# Display MSE of Linear Model, Ridge Model, and Lasso Model
+c(LM=lm.MSE,Ridge=ridge.MSE,Lasso=lasso.MSE)
+
+```
+Here we see that Lasso was a slight improvement in MSE on the Linear model, Ridge did even better
+
+### 3.5 Large Number of significant predictors
+
+Apply Lasso to 490 predictors
+
+```{r}
+# Create Y test values
+y.test <- Y[test,490]
+# fit lasso model on training set
+lasso490 <- glmnet(x=X[train, 1:491],y=Y[train,490], alpha=1, nlambda = 100, lambda.min.ratio = .0001)
+plot(lasso490)
+# Use cross validation to find best lambda
+cv.out <- cv.glmnet(x=X[train,1:491],y=Y[train,490],alpha=1)
+plot(cv.out)
+(bestlam=cv.out$lambda.min)
+# Calculate mean squares prediction error
+lasso.pred=predict(lasso490,s=bestlam, newx = X[test,1:491])
+mean((lasso.pred - y.test)^2)
+# Fit lasso regression model to the entire data
+out=glmnet(x=X[,1:491],y=Y[,490],alpha=1,lambda=bestlam)
+lasso.coef=predict(out,type="coefficients",s=bestlam)
+removedSlopes <- rep(NA,491)
+removedSlopes[lasso.coef[-1]==0] <- slopesSet[1:491][lasso.coef[-1]==0]
+plot(slopesSet, pch=19)
+points(removedSlopes,col="red", pch=20)
+```
+
+
+
+### 3.6 Large # of predictors
+
+```{r}
+set.seed(8394756)
+Epsilon<-rnorm(500,0,1)
+X<-rnorm(500*500,0,2)
+dim(X)<-c(500,500)
+colnames(X)<-paste0("X",1:500)
+slopesSet<-runif(500,-.1,3)
+Y<-sapply(2:500,function(z) 1+X[,1:z]%*%slopesSet[1:z]+Epsilon)
+head(X[,1:5])
+head(Y[,1:5])
+# Separate into train and test
+y.test=Y[test,490]
+# Fit lasso model
+lasso490=glmnet(x=X[train,1:491],y=Y[train,490],alpha=1,nlambda=100,lambda.min.ratio=.0001)
+plot(lasso490)
+
+# Select best lambda using cross validation
+ 
+cv.out=cv.glmnet(x=X[train,1:491],y=Y[train,490],alpha=1)
+plot(cv.out)
+(bestlam =cv.out$lambda.min)
+bestlam
+
+# fit lasso to the entire sample using bestlam
+lasso.pred=predict(lasso490, s=bestlam, newx=X[test,1:491])
+#MSE
+mean((lasso.pred -y.test)^2) 
+
+out=glmnet(x=X[,1:491],y=Y[,490],alpha=1,lambda=bestlam)
+lasso.coef=predict(out,type="coefficients",s=bestlam)
+removedSlopes<-rep(NA,491)
+removedSlopes[lasso.coef[-1]==0]<-slopesSet[1:491][lasso.coef[-1]==0]
+plot(slopesSet[1:491],pch=19)
+points(removedSlopes,col="red",pch=20)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
