@@ -1,0 +1,115 @@
+---
+title: "Workshop"
+author: "John Navarro"
+date: "June 30, 2017"
+output: pdf_document
+---
+```{r}
+
+```
+
+```{r}
+set.seed(8394756)
+Epsilon<-rnorm(500,0,1)
+X<-rnorm(500*500,0,2)
+dim(X)<-c(500,500)
+colnames(X)<-paste0("X",1:500)
+slopesSet<-runif(500,1,3)
+Y<-sapply(2:500,function(z) 1+X[,1:z]%*%slopesSet[1:z]+Epsilon)
+head(X[,1:5])
+```
+
+Fit LM
+```{r}
+m10<-lm(Y~.,data=data.frame(Y=Y[,9],X[,1:10]))
+completeModelDataFrame<-data.frame(Y=Y[,490],X[,1:491])
+m490<-lm(Y~.,data=completeModelDataFrame)
+```
+
+Relative measures
+```{r}
+install.packages("relaimpo")
+library(relaimpo)
+(metrics10 <- calc.relimp(m10, type= c("lmg","first","last","betasq", "pratt")))
+```
+Rank 10 predictors using method lmg
+Reorder predictors according to method lmg
+
+```{r}
+(metrics10.lmg.rank<-metrics10@lmg.rank)
+```
+```{r}
+orderedPredictors <- cbind(Predictors=colnames(X[,1:10])[order(metrics10.lmg.rank)],Slopes=slopesSet[1:10][order(metrics10.lmg.rank)])
+
+  
+originalR2.10<-sapply(2:10,function(z) summary(lm(Y~.,data=data.frame(Y=Y[,9],X[,1:z])))$r.squared)
+improvedR2.10<-sapply(2:10,function(z) summary(lm(Y~.,data=data.frame(Y=Y[,9],orderedPredictors$Slopes[,1:z])))$r.squared)
+matplot(2:10,cbind(originalR2.10,improvedR2.10),type="l",lty=1,lwd=2,col=c("black","red"),
+        main="Improvement of Fit with Number of Predictors",
+        xlab="Number of Predictors",ylab="Determination Coefficient")
+legend("bottomright",legend=c("Original","Improved"),lty=1,lwd=2,col=c("black","red"))  
+```
+
+# 2. Method of PCA
+
+Relplace original 10 predictors w their Principal components
+
+```{r}
+metrics10.lmg
+PCA.10 <- princomp(data.frame(X[,1:10]))
+summary(PCA.10)
+#Do PCA on predictors only. Then reduce the # of predictors by replacing w most important factors. 
+```
+Extract factorLoadings, factorScores, zeroLoading
+```{r}
+factors10Data<-data.frame(Y=Y[,9],factorScores)
+m10.PCA<-lm(Y~.,data=factors10Data)
+#look at summary of m10.PCA and m10
+```
+
+# Fit lm to 491 predictors
+make pCA for491 predictors w no response
+look at importane graph of factors
+definefactors/loadings/zero loadings
+fit lm w PCA factors
+get relative imporance
+use prcomp()
+
+```{r}
+# build data frame, with 490th column as y, and 
+completeModelDataFrame<-data.frame(Y=Y[,490],X[,1:491])
+#run lm on dataset
+m490<-lm(Y~.,data=completeModelDataFrame)
+#run PCA for 491 predictors w no response
+PCA.491 <- prcomp(X[,1:491])
+#calculate importance graph
+impo <- PCA.491$sdev/(sum(PCA.491$sdev))
+plot(impo, type="l")
+#extract factors and rotation
+PCA.491.factors <- PCA.491$x
+PCA.491.rotation <- PCA.491$rotation
+factors491Data <- data.frame(Y=Y[,490], PCA.491.factors)
+m491.PCA <- lm(Y~., factors491Data)
+(metrics.m491.PCA <- calc.relimp(m491.PCA, type=c("first")))
+sum.PCA.first=sum(metrics.m491.PCA@first)
+sum.PCA.first
+```
+rank the factors
+```{r}
+(first.PCA.rank <- metrics.m491.PCA@first.rank)
+orderedFactors<-factorScores[,order(first.PCA.rank)]
+```
+
+
+
+
+# Workshop 3 Labs from book
+1. PCR
+
+```{r}
+suppressWarnings(library (pls))
+suppressWarnings(library (ISLR))
+data(Hitters)
+head(Hitters)
+```
+
