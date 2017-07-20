@@ -1,0 +1,239 @@
+---
+title: "ML_Workshop2"
+author: "John Navarro"
+date: "July 14, 2017"
+output: pdf_document
+---
+# 1. Lab of ch 5 validation and cross validation
+## 1.1 Validation
+### 1.1.1 Follow the steps of the lab
+
+```{r}
+library(ISLR)
+library(bootstrap)
+set.seed (1)
+# create index train, random sample 196 out of 392
+# Command sample(392,196) is equivalent to sample(1:392,196,replace=F) and selects index for train subsample from sample of length 392.
+train<-sample (392 ,196)
+length(train) # 196
+# fit linear model
+lm.fit1<-lm(mpg~horsepower ,data=Auto ,subset =train )
+summary(lm.fit1)
+# calc mse of the predictions on test set (mpg), doing all 392 values, remove train values, take square, mean
+mse1<-mean((Auto$mpg-predict(lm.fit1 ,Auto))[-train ]^2)
+mse1
+
+# alternative fit polynomial regression of degree 2 and 3
+lm.fit2<-lm(mpg~poly(horsepower ,2) ,data=Auto ,subset =train )
+mse2<-mean((Auto$mpg -predict (lm.fit2 ,Auto))[-train ]^2)
+lm.fit3<-lm(mpg~poly(horsepower ,3) ,data=Auto ,subset =train )
+mse3<-mean((Auto$mpg -predict (lm.fit3 ,Auto))[-train ]^2)
+
+# compare the mse values
+c(Linear=mse1,Quadratic=mse2,Cubic=mse3)
+```
+
+ cubic is the best, try a new sample
+ 
+ 
+```{r}
+set.seed (2)
+train<-sample (392 ,196)
+lm.fit1<-lm(mpg~horsepower,data=Auto,subset=train )
+mse1<-mean((Auto$mpg-predict(lm.fit1 ,Auto))[-train ]^2)
+lm.fit2<-lm(mpg~poly(horsepower ,2) ,data=Auto ,subset =train )
+mse2<-mean((Auto$mpg -predict (lm.fit2 ,Auto))[-train ]^2)
+lm.fit3<-lm(mpg~poly(horsepower ,3) ,data=Auto ,subset =train )
+mse3<-mean((Auto$mpg -predict (lm.fit3 ,Auto))[-train ]^2)
+c(Linear=mse1,Quadratic=mse2,Cubic=mse3)
+```
+This time quadratic is the best. 
+
+## 1.1.2 Discussion
+
+Analyze the residuals from the 3 models
+For linear regression
+```{r}
+summary(lm.fit1)
+plot(lm.fit1$residuals)
+# not homoskedastic, bc, looks narrow on left, wider on right
+hist(lm.fit1$residuals)
+qqnorm(lm.fit1$residuals)
+qqline(lm.fit1$residuals)
+# skewed dist. one is fat. not satisfying linear model, the results are biased
+
+```
+
+look at polynomial of 2nd degree
+```{r}
+summary(lm.fit2)
+hist(lm.fit2$residuals)
+qqnorm(lm.fit2$residuals)
+qqline(lm.fit2$residuals)
+# fat tails, far from assumption.
+```
+Take a look at the actual relationship between hp and mpg to see if it is linear
+```{r}
+plot(Auto$horsepower, Auto$mpg)
+```
+This does not look linear which explains the better fit by a higher degree polynomial.. Maybe use a simple transformation
+
+Try to do 1/mpg as response for lm as a transformation
+```{r}
+plot(Auto$horsepower, 1/Auto$mpg)
+```
+Looks better, try to fit a linear model
+```{r}
+lm.fit.1.trans <- lm(1/(mpg)~horsepower, data=Auto, subset=train)
+summary(lm.fit.1.trans)
+```
+
+Rsqd has increased(but is a measure of linear dependence)
+Look at residuals
+```{r}
+hist(lm.fit.1.trans$residuals)
+qqnorm(lm.fit.1.trans$residuals)
+qqline(lm.fit.1.trans$residuals)
+```
+residuals are better, check mse too
+```{r}
+mse1.trans <- mean((Auto$mpg-1/(predict(lm.fit.1.trans, Auto)))[-train]^2)
+mse1.trans
+c(Linear=mse1,Quadratic=mse2,Cubic=mse3, Transformed=mse1.trans)
+```
+
+By still using a linear fit we achieve better performance by any measure
+plot the data and fits
+```{r}
+plot(Auto$horsepower, Auto$mpg)
+points(Auto$horsepower,predict(lm.fit1,Auto),col="blue",pch=16)
+points(Auto$horsepower,predict(lm.fit2,Auto),col="orange",pch=16)
+points(Auto$horsepower,1/(predict(lm.fit.1.trans,Auto)),col="magenta",pch=16)
+legend("topright",legend=c("Data","Linear","Quadratic","Transformed"),col=c("black","blue","orange","magenta"),pch=c(1,16,16,16))
+```
+
+
+## 1.2 Leave one out cross validation - Jack knife
+
+```{r}
+suppressWarnings(library(boot))
+glm.fit<-glm(mpg???poly(horsepower,1) ,data=Auto)
+cv.err<-cv.glm(Auto,glm.fit,K=dim(Auto)[1]) # leave-one-out cross validation, K=392 folds 
+cv.err$delta #estimate of pred error, adjusted cv estimate for bias from not useing jackknife
+```
+parameter k sets # of folds
+when k==dim(Auto)[1] the # of observations in the sample the function performs, leave one out cv
+```{r}
+#Use leave one out cv while fitting multiple degrees of polynomial
+
+cv.error <- rep(0,5)
+for(i in 1:5){
+  glm.fit <- glm(mpg~poly(horsepower, i),data=Auto)
+  cv.error[i] <- cv.glm(Auto, glm.fit)$delta[1]
+}
+# Extract all MSEs 
+cv.error
+```
+Sharp drop in MSE when going to quadratic, then no significant changes.
+Selected model is quadratic fit
+
+### 1.3 K-fold cross validation
+
+K-fold cross validation is like leave on eout, but it leaves out folds that may be greater than one in size
+```{r}
+set.seed(17)
+cv.error.10 <- matrix(rep(0,50), ncol=5)
+for (i in 1:5){
+  glm.fit <- glm(mpg~poly(horsepower,i),data=Auto)
+  cv.error.10[,i] <- cv.glm(Auto, glm.fit,K=10)$delta
+}
+cv.error.10
+
+```
+this is the MSE for each fold(rows) for each polynomial fit(columns)
+Here we see something similar as jack knife, big drop in MSE from linear to quadratic. not much change afterwards.
+
+# 2. Bootstrap
+
+## 2.1 Analyzing mixing parameter of portfolio of returns
+
+Bootstrap is simple and universal method that can help estimating accuracy of estimation
+
+It is done in 2 steps
+1. Create a function calculating an estimate with a given subsample.
+For example, here is the function calculating mixing paramater alpha of the portfolio from slide 8, where the data are 2 columns of X,Y of 2 asset returns
+Second argument is an index defining the subset
+
+```{r}
+alpha.fn <- function(data, index) {
+  X=data$X[index]
+  Y=data$Y[index]
+  return((var(Y)-cov(X,Y))/(var(X)+var(Y) - 2*cov(X,Y)))
+}
+# data set is Portfolio from ISLR
+head(Portfolio)
+dim(Portfolio) # 100x2
+plot(Portfolio$X, Portfolio$Y)
+alpha.fn(Portfolio,1:100)
+```
+In order to estimate variablitiy of estimate of alpha, repeat such sub-sampling or resampling many times and calculate alpha estimate each time.  Then calculate the standard deviation of the estimate
+This is what function boot() does
+```{r}
+b<- boot(Portfolio, alpha.fn, R=1000)
+head(b$t)
+```
+
+##2.2 Analyzing variability of regression coefficients
+
+Obtain bootstrap method standard errors of intercept and slope in the regression model for the dataset Auto
+
+We first create a simple function, boot.fn(), which takes in the Auto data set as well as a set of indices for the observations, and returns the intercept and slope estimates for the linear regression model. We then apply this function to the full set of 392 observations in order to compute the estimates of ??0 and ??1 on the entire data set using the usual linear regression coefficient estimate formulas from Chapter 3. Note that we do not need the { and } at the beginning and end of the function because it is only one line long.
+
+```{r}
+boot.fn <- function(data, index){
+  return(coef(lm(mpg~horsepower, data=data, subset=index)))
+}
+boot.fn(Auto, 1:392)
+
+# Function can be applied to rnadomly selected subsets of the original sample
+set.seed(1)
+boot.fn(Auto, sample(392,392,replace=T))
+```
+Now find standard errors of estimates of slope and intercept for 1000 sub-samples of the original sample
+```{r}
+# run boot function
+boot(Auto, boot.fn, 1000)
+# compare to standard output from lin model summary
+summary(lm(mpg~horsepower, data=Auto))$coef
+```
+
+Repeat the same calcualtion for the quadratic fit
+```{r}
+boot.fn<-function(data,index) {
+ coefficients(lm(mpg???horsepower+I(horsepower^2),data=data,subset =index))
+}
+set.seed (1)
+boot(Auto,boot.fn,1000)
+```
+
+Repeat for the quadratic fit
+```{r}
+boot.fn<-function(data,index) {
+ coefficients(lm(mpg???horsepower+I(horsepower^2),data=data,subset =index))
+}
+set.seed (1)
+boot(Auto,boot.fn,1000)
+
+# compare to lin model summary
+summary(lm(mpg???horsepower+I(horsepower^2),data=Auto))$coef
+```
+
+Now try the transformed data
+```{r}
+boot.fn.tr<-function(data,index) {
+return (coef(lm(1/mpg???horsepower,data=data ,subset =index)))
+}
+boot(Auto,boot.fn.tr,1000)
+summary(lm(1/mpg~horsepower,data=Auto))$coeff
+```
+The transformed data has a much better fit and the assumptions are more realistic, the diffrence is still there, it is explained by the fact that bootstrap removes effect of outliers even if it is small
