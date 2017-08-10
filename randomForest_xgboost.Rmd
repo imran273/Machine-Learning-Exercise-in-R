@@ -1,0 +1,934 @@
+f---
+title: "Workshop1 week7"
+author: "John Navarro"
+date: "August 4, 2017"
+output: pdf_document
+---
+# 1. Review of bagging, random forests, and boosting
+
+## 1.1 Bagging
+
+Looking to improve decision tree performance by combining results of several trees build on randomly generated training subsets with replacement. Bagging is short for Bootstrap Aggregating
+
+### Uses:
+Can be used for classification or regression.
+
+### Method:
+Each learning sample generates a predictor tree, in the case of regression, simple averaging gives the aggregated predictor. For classification problems, we use majority voting
+
+### Benefits:
+This bootstrapping procedure leads to better model performance because it decreases the variance of the model, without increasing the bias
+This means that while the predictions of a single tree are highly sensitive to noise in its training set, the average of many trees is not, as long as the trees are not correlated
+
+### Problems:
+But, if one or a few features happen to be very strong predictors for the response variable, these features will be selected in many of the trees. Causing the trees to become correlated. Random forest method can over come this disadvantage
+
+## 1.2 Random Forests
+### Uses:
+Can also handle both regression and classification tasks. It also can be used as dimensionality reduction method. 
+
+
+### Method:
+As in bagging, a number of decision trees is built on bootstrapped learning samples.
+But when building these trees, EACH time a split in a tree is considered, a random sample of m predictors is chosen as split candidates from the full set of predictors. The split is allowed to use only one of those m predictors.
+Steps
+  1. Bootstraped sample of observations(rows) is generated from set L by sampling uniformly and with replacement. This sample will be the training set for the tree
+  2. If there are M input variables, at EACH node a subset m variables are selected out of M
+  The best split on these m are used to split the node, the value of m is held constant
+  3. Algo builds N trees, each is grown fully with no pruning
+  4. Predict new data by aggregating the predictions of N trees. majority for classification, average for regression
+
+Suggested m values
+m is sqrtM for classification
+m is M/3 for regression
+
+
+### Benefits:
+Random forests can deal with missing values ( if you use randomForestSRC), outlier values
+RFs provide an improvement over bagged trees by decorrelating trees when the impose constraints on predictors.
+RF can handle large data set with higher dimensionality. It can handle thousands of input variables and identify most significant variables so it is considered one of the dimensionality reduction methods. The model outputs the importance of variables
+
+It has an effective method for estimating missing data and maintains accuracy when a large proportion of the data are missing. It has methods for balancing errors in data sets where classes are imbalanced.
+Random Forest involves sampling of the input data with replacement. Here around one third of the data are not used for training and can be used for testing.
+These observations are called out-of-bag (OOB) samples.
+Errors estimated on these OOB samples are known as OOB errors. The resulting OOB errors are valid estimates of the test error for the bagged model, since the response for each observation is predicted using only the trees that were not fit using that observation.
+An OOB error estimate is close to that obtained by 3-fold crossvalidation. Hence unlike many other nonlinear estimators, random forests can be fit in one sequence, with cross-validation being performed along the way.
+
+### Problems:
+Random Forest is better at classification but not as good for regression problems since it does not give continuous output.
+
+It looks like a black box approach to statistical modelers - you have very little control on what the model does.
+You can at best - try different parameters and random seeds.
+
+## 1.3 Boosting
+
+Boosting refers to a family of algos which converts group of weak learners to a strong learner. Boosting was originally designed for classification problems, but it was later extended to regression. Like bagging, boosting is a general approach that can be applied to many statistical learning methods for regression or classification
+
+### 1.3.1 Gradient Boosting Trees
+
+In each step of Boosting procedure, the tree is fitted to the residuals of the previous step. One may note that residual is the negative derivative of the square loss function. 
+So boosting can be considered as a gradient desceent algorithm.
+
+
+
+
+# 2 simple Example w Clustering
+
+Simulate the data, add noise to the sine wave
+```{r}
+set.seed(1180)
+x<-seq(0,2*pi,by=.01)
+sigmaEps<-.1
+eps<-rnorm(length(x),0,sigmaEps)
+signal<-sin(x)+eps
+data<-data.frame(x=x,signal=signal)
+head(data)
+```
+
+```{r}
+myPlot<-function(myDataFrame){
+  lastCol<-ncol(myDataFrame)
+  matplot(myDataFrame$x,myDataFrame[,c(2,lastCol)],pch=16,xlab="X",ylab="Data and Predictor")
+}
+myPlot(data)
+
+```
+As a simple learner, use cluster analysis to separate into 2 clusters
+```{r}
+library(mclust)
+```
+```{r}
+model <- Mclust(data$signal,G=2)
+summary(model)
+
+plot(model, what="classification")
+head(model$classification)
+
+# Clustering identified two groupw with post and neg mean values and the same std deviations
+# Create the first learner fitted values and add the column of them to the data frame
+data$learner1<-model$parameters$mean[model$classification]
+# check that learner column predictions
+head(data)
+
+# plot the data with the predictions
+myPlot(data)
+
+# assign errors to residuals1
+residuals1<-data$signal-data$learner1
+
+# Plot the residuals
+plot(x,residuals1)
+
+# stand deviation of residuals
+(sd1 <- sd(residuals1))
+
+# standard deviation of signal data compared to sd of residuals
+c(sd(data$signal),sd1)
+```
+There is a remaining pattern in the residuals, but we observe a significant reduction in standard deviation relative to the original data.
+In order to repeat the steps of gradient boosting several more times create a function simpleLearner<-function(mySignal) which takes a signal vector and splits it into 2 groups using Mclust(), returning vector of the next learner predicted values.
+
+```{r}
+simpleLearner <- function(mySignal){
+  # separate the input vector into 2 groups using Mclust
+  model <- Mclust(mySignal, G=2)
+  # calculate the residuals by subtracting the predictions from the original data
+  residuals <- model$parameters$mean[model$classification]
+  # return the new residuals
+  return(residuals)
+}
+residuals2 <- simpleLearner(residuals1)
+ head(residuals2) 
+ 
+ 
+data$learner12<-data$learner1+simpleLearner(residuals1)
+myPlot(data)
+
+```
+The combination of the two simple learners creates a pattern with 4 levels, which captures the signal much better. Create new residuals and repeat the iteration step one more time.
+
+```{r}
+residuals2<-data$signal-data$learner12
+plot(residuals2)
+(sd2 <- sd(residuals2))
+# compare the change in sd through the steps
+c(sd(data$signal), sd1, sd2)
+```
+Again, this step significantly reduced standard deviation of the residuals. Create new learner combining 3 iterations
+```{r}
+# run the learner function, and add column of predictions to data
+data$learner123 <- data$learner12+simpleLearner(residuals2)
+# plot the data w prediction of 3rd learner
+myPlot(data)
+```
+At 8 levels the signal is captured better, make another iteration
+```{r}
+# calculate and visualze the residuals
+residuals3 <- data$signal-data$learner123
+plot(residuals3)
+# extract the sd of the newest residuals
+(sd3 <- sd(residuals3))
+# compare the sds of the process
+c(sd(data$signal), sd1, sd2, sd3)
+
+# Create the 4th learner column of data
+data$learner1234 <- data$learner123+simpleLearner(residuals3)
+#plot
+myPlot(data)
+```
+```{r}
+# calculate the residuals and plot
+residuals4 <- data$signal-data$learner1234
+plot(residuals4)
+# calculate the sd and compare
+(sd4 <- sd(residuals4))
+c(sd(data$signal), sd1,sd2,sd3,sd4)
+```
+Try a final time
+```{r}
+# repeat all the steps
+data$learner12345<-data$learner1234+simpleLearner(residuals4)
+myPlot(data)
+residuals5<-data$signal-data$learner12345
+plot(residuals5)
+(sd5<-sd(residuals5))
+sds <- c(sd(data$signal),sd1,sd2,sd3,sd4,sd5)
+# plot standard deviation of each iteration
+plot(sds, type="b")
+```
+We can see that the standard deviation of the residuals did not improve, so we can stop the process. Note that the standard deviation of the remaining noise is lower than the sd of the original simulated noise sigmaEps
+
+Overall, we demonstrated that sequential simple learners can be used to drastically improve prediction, shown by decreasing the standard deviation of the residuals.
+
+# 3. Regression
+
+## 3.1 Example predicting Baseball Players salaries
+
+Use the Hitters data from the ISLR library for a simple example
+
+```{r}
+library(ISLR)
+library(knitr)
+```
+
+Remove missing entries and takelogs
+
+```{r}
+# grab the data
+data(Hitters)
+# check the size   322 x 20
+dim(Hitters)
+# Remove incomplete cases
+Hitters <- na.omit(Hitters)
+# check how many rows removed, now 263 x 20
+dim(Hitters)
+
+# Log transform Salary to make it a bit more normally distributed
+Hitters$Salary <- log(Hitters$Salary)
+kable(head(Hitters,3))
+```
+
+### 3.1.1 Random forest
+
+Random forest method is implermented in R package randomForest()
+Description: randomForest implement's Breiman'srandom forest algo (based on original fortran code) for classification and regression. It can also be used in unsupervised mode for assessing proximities among datapoints.
+```{r}
+library(randomForest)
+```
+
+#### 3.1.1.1 Default arguments
+
+Set seed for reproducibility and grow a forest
+Variable importance=True makes it heavy, false makes it faster
+```{r}
+set.seed(0)
+rfSalary <- randomForest(Salary~., ntree=500, data=Hitters, importance=TRUE)
+print(rfSalary)
+```
+
+The MSE is computed on the basis of out of bag sample
+% var explained is 100(1-(MSEoob/sigma^2)) 
+
+The package has extractor function importance() for variable importance measures as produced by randomForest.
+
+Here are the definitions of the variable importance measures:
+
+The first measure is computed from permuting OOB data: For each tree, the prediction error on the out-of-bag portion of the data is recorded (error rate for classification, MSE for regression).
+Then the same is done after permuting each predictor variable.
+The difference between the two are then averaged over all trees, and normalized by the standard deviation of the differences.
+Intuition behind the measure: if predictor is not important, permuting its values will not make prediction power worse.
+If the standard deviation of the differences is equal to 0 for a variable, the division is not done (but the average is almost always equal to 0 in that case).
+
+The second measure is the total decrease in node impurities from splitting on the variable, averaged over all trees.
+For classification, the node impurity is measured by the Gini index.
+For regression, it is measured by residual sum of squares.
+
+```{r}
+importance(rfSalary)
+```
+We can also sort variables according to its importnaces and plot them
+```{r}
+varImpPlot(rfSalary, main="Variable Importance")
+plot(rfSalary)
+```
+This shows that we may significantly reduce the number of trees without losing accuracy
+
+#3.1.1.2 Reduced number of trees
+
+```{r}
+set.seed(0)
+rfSalary200 <- randomForest(Salary~., ntree=200, data=Hitters, importance=T)
+print(rfSalary200)
+```
+Compare the 2 models
+```{r}
+rbind(T200=c(mse=tail(rfSalary200$mse,1),rsq=tail(rfSalary200$rsq,1)),
+         T500=c(mse=tail(rfSalary$mse,1),rsq=tail(rfSalary$rsq,1)))
+```
+Did the relative importance change
+```{r}
+cbind(T200=row.names(rfSalary200$importance),T500=row.names(rfSalary$importance))
+```
+
+#### 3.1.1.3 Variation of number of variables in split
+
+Argument mtry: Number of variables randomly sampled as candidates at each split. Note that
+the default values are different for classification (sqrt(p) where p is number of
+variables in x) and regression (p/3)
+
+```{r}
+# set a vector assigning values for mtry, from 1 to 19
+mtryVec <- 1:19
+
+# set seed for reproducibility
+set.seed(0)
+
+# extract the mse and rsq for each iteration of Random Forest with different mtry values
+mtryQuality <- t(sapply(mtryVec, 
+                        function(z) c(mse=tail(randomForest(Salary~.,
+                                                            ntree=200,
+                                                            data=Hitters,
+                                                            importance=T,
+                                                            mtry=z)$mse,1),
+                                      rsq=tail(randomForest(Salary~.,
+                                                            ntree=200,
+                                                            data=Hitters,
+                                                            importance=T,
+                                                            mtry=z)$rsq,1)
+                                      )
+                        )
+                 )
+
+# return the head of mse and rsq for each value of mtry
+head(mtryQuality)
+
+```
+Plot the MSE and Rsquaredas the number of variables randomly sampled as candidates at each split
+
+```{r}
+par(mfrow = c(2,1))
+plot(mtryQuality[,1], type="b")
+plot(mtryQuality[,2], type="b")
+```
+
+Plotting the curves for different numbers of variables at each split suggests to use parameter mtry equal to 5. 
+Predicting and calculating RMSE for the random forest model
+
+```{r}
+# set seed
+set.seed(0)
+# Run random forest with 6 variable candidates at each split
+rfSalary200 <- randomForest(Salary~., ntree=200, data=Hitters, importance=F, mtry=6)
+# print the model
+print(rfSalary200)
+# return the mean squared error 
+mean((Hitters$Salary-predict(rfSalary200))^2)
+```
+
+### 3.1.2 Gradient Boosting
+
+Analyze the same data using gradient boosting.
+
+The method is implemented in xgboost.XGBoost is short for "Extreme Gradient Boosting".
+It has several nice properties:
+  - Speed: it can automatically do parallel computation on Windows and Linux, with OpenMP.
+    It is generally over 10 times faster than the classical gbm.
+  - Input Type: it takes several types of input data:
+      - Dense Matrix: R's dense matrix, ie matrix
+      - Sparse Matrix: R's sparse matrix, ie Matrix::dgCMatrix
+      - Data File: local data files;
+      - xgb.DMatrix: its own class(recommended)
+  - Sparsity: it accepts sparse input for both tree booster and linear booster, and is            optimized for sparse input
+  - Customization: it supports customized objective functions and evaluation functions
+
+```{r}
+# install the package
+library(xgboost)
+
+# Set the objective parameter
+params <- list("objective" = "reg:linear")
+```
+
+xgboost has a large number of parameters, some of them are on the list in params.
+Commonly used ones are
+  - objective: objective function, typically:
+      - reg:linear - for linear regression
+      - binary:logistic - logistic regression for classifications
+  - eta: step size of each boosting step
+  - max.depth: maximum depth of the tree
+  - nthread: number of threads used in training, if not set, all threads are used
+  
+xgboost only works with numeric data, while Hitters has several categorical columns. Convert them to integer and run cross validation
+
+```{r}
+# converts all the variables to numeric mode, then binds them as columns of a matrix, except Salary
+matrHitters = data.matrix(Hitters)[,-which(names(Hitters) == "Salary")]
+# assign salary as the target variable
+target = Hitters$Salary
+```
+Run xgb.cv() to find the best number of iterations
+```{r}
+# set seed for reproducibility
+set.seed(0)
+# run xgb.cv
+cvSalary = xgb.cv(params=params, data = matrHitters, label = target,
+                nfold = 3, nrounds = 50,prediction=T,verbose=F)
+# returns the names of the model
+names(cvSalary)
+```
+```{r}
+# display the rmse and sd of the train/test
+(cvSalary.table <- cvSalary$evaluation_log)
+# return the # of iterations given lowest RMSE
+(bestNR=which.min(cvSalary.table$test_rmse_mean))
+# plot RMSE at each iterations
+plot(cvSalary.table$test_rmse_mean, ylim=c(0.4, 0.6))
+# return the best rmse
+cvSalary.table$test_rmse_mean[bestNR]
+```
+Note effect of overfitting in the RMSE table, optimal # of iterations minimizes the RMSE
+
+Cross validation shows that we should use the number of iterations 26 and that MSE test error equals. Equivalently, RMSE equals
+
+Train the model using bestNR and calculate its RMSE using entire sample
+
+```{r}
+modelSalary <- xgboost(data=matrHitters, label=target, params=params, nrounds=bestNR, verbose=FALSE)
+names(modelSalary)
+# calculate RMSE
+mean((target-predict(modelSalary, newdata=matrHitters))^2)
+```
+this mean squared error still is too small in comparison with the order of magnitude of test RMSE
+
+#### 3.1.2.1 Tuning parameters
+
+Prepare the grid of parameters
+```{r}
+#xgboost task parameters
+folds <- 3
+# evaluation metric for validation
+eval_metric= list("rmse")
+
+# Parameters grid to search
+eta=c(.3,.15,0.05)
+max_depth=c(4,5,6)
+nrounds <- c(seq(from=30, to=90, by=10),26)
+
+# Table to track performance from each worker node
+res <- data.frame(Value=numeric(), Eta=numeric(), Max_Depth=numeric(), Nrounds=numeric())
+```
+make fitting function
+
+```{r}
+# Fitting function for iterations
+xgbCV <- function (Inputs) {  
+  # one combination of parameters
+  # extract eta, max depth and nrounds from Inputs
+  myEta<-Inputs$eta 
+  myMax_depth<-Inputs$max_depth
+  myNRounds<-Inputs$n_Rounds
+  set.seed(0)
+  # fit xgb.cv
+  fit <- xgb.cv( 
+    # first 2 parameters of 3
+    params =list(eta=myEta,max_depth=myMax_depth),   
+    data = matrHitters,
+    # "rmse"
+    metrics=eval_metric, 
+    # regressions
+    objective = "reg:linear", 
+    # respones
+    label = target, 
+    # 3 folds
+    nfold = folds, 
+    # from params, max # of rounds, 30 to 90 by 10 and 26
+    nrounds = myNRounds, 
+    # controls output
+    verbose=FALSE 
+  )
+  # select best NR from the table of rmse/sd
+  mybestNR = which.min(fit$evaluation_log$test_rmse_mean) 
+  # creating evaluation level, selecting column #3
+  val <- fit$evaluation_log$test_rmse_mean[mybestNR] 
+  # double aarow, if specify a dataframe outside of function, to assign values to a dataframe
+  # that exists outside the function.
+  res <<- rbind(res,c(val,myEta,myMax_depth,mybestNR))  
+
+  return(val) # is MSE for best # of iterations
+}
+```
+Run search on grid
+```{r}
+library(NMOF)
+```
+```{r}
+sol <- gridSearch(
+  fun=xgbCV,
+  levels=list(eta=eta, max_depth=max_depth, n_Rounds=nrounds),
+  method="loop",
+  keepNames = T,
+  asList=T
+)
+```
+showing optimal set of parameters
+```{r}
+sol$minlevels
+```
+training the model with optimal parameters
+
+```{r}
+# Train model given tuned parameters
+params <- sol$minlevels[1:2]
+set.seed(0)
+xgbSalary.tuned <- xgboost(data=matrHitters,
+                           label=target,
+                           objective="reg:linear",
+                           params=params,
+                           nrounds=sol$minlevels$n_Rounds,
+                           verbose=FALSE)
+c(Default=mean((target-predict(modelSalary, newdata = matrHitters))^2),
+  Tuned=mean((target-predict(xgbSalary.tuned, newdata=matrHitters))^2))
+```
+This does not seem like improvement. Trying parameters manually
+
+Increasing tree depth to 6.
+
+```{r}
+params <- list(eta=.15, max_depth=6)
+xgbSalary.tuned <- xgboost(data=matrHitters,
+                           label=target,
+                           objective="reg:linear",
+                           params=params,
+                           nrounds=sol$minlevels$n_Rounds,
+                           verbose=FALSE)
+c(Default=mean((target-predict(modelSalary, newdata = matrHitters))^2),
+  Tuned=mean((target-predict(xgbSalary.tuned,newdata = matrHitters))^2))
+```
+Increasing eta to the default value of 0.3
+```{r}
+params <- list(eta=0.3, max_depth=6)
+xgbSalary.tuned <- xgboost(data=matrHitters,
+                           label=target,
+                           objective="reg:linear",
+                           params=params,
+                           nrounds=sol$minlevels$n_Rounds,
+                           verbose=FALSE)
+c(Default=mean((target-predict(modelSalary, newdata=matrHitters))^2),
+  Tuned=mean((target-predict(xgbSalary.tuned, newdata=matrHitters))^2))
+```
+
+## 3.2 Example:Large Number of Predictors
+
+Consider the example analyzed in the workshop Linear Regression with Large Number of Predictors. Simulate data
+```{r}
+N=500
+set.seed(0)
+Epsilon <- rnorm(N,0,1)
+X <- rnorm(N*N, 0,2)
+dim(X) <- c(N,N)
+colnames <- paste0("X",1:N)
+slopesSet <- runif(N,1,3)
+Y <- sapply(2:N, function(z) 1+X[,1:z]%*%slopesSet[1:z] + Epsilon)
+head(X[,1:5])
+``` 
+```{r}
+m=440
+completeModelDataFrame <- data.frame(Y=Y[,m-1],X[,1:m])
+dim(completeModelDataFrame) #500x441
+```
+
+### 3.2.1 Random forest
+
+```{r}
+set.seed(0)
+rfManyReg <- randomForest(Y~., data=completeModelDataFrame)
+print(rfManyReg)
+```
+
+```{r}
+plot(rfManyReg)
+```
+It is little bit better than regression tree(see previous lecture) but far behindthe linear model that gave us MSE 52.07
+```{r}
+which.min(rfManyReg$mse)
+which.min(rfManyReg$mse[1:100])
+
+```
+
+```{r}
+set.seed(0)
+rfManyReg <- randomForest(Y~., data=completeModelDataFrame, ntree=which.min(rfManyReg$mse[1:100]))
+print(rfManyReg)
+```
+
+#### 3.2.1.1 Importance of predictors
+
+```{r}
+# plot the variables by importance
+varImpPlot(rfManyReg, main="Variable Importance")
+# plot the rank of the importance of variables for each slope
+plot(rank(slopesSet[1:m]),rank(importance(rfManyReg)))
+# view the head of the data
+head(cbind(rank(slopesSet[1:m]), rank(importance(rfManyReg))))
+
+```
+
+Recall that all parameters are simulated as significant and all predictors are independent by construction. The larget the coefficient, the more significant should be the predictor.
+Random tree may not be assigning importance correctly in this case
+
+### 3.2.2 Gradient boosting
+
+```{r}
+params <- list("objective"="reg:linear")
+set.seed(0)
+gbManyReg=xgb.cv(params=params, data=data.matrix(completeModelDataFrame[,-1]),
+                 label=completeModelDataFrame[,1],
+                 nfold=5, nrounds=100, verbose=FALSE)
+(bestNR=which.min(gbManyReg$test.rmse.mean))
+
+gbManyReg$test.rmse.mean[bestNR]^2
+```
+We see that even advanced tree models can not treat complicated linear model when linear model is able to fit the data
+
+GENERAL CONCLUSION
+Linear model may not be the best choice in all cases, but if it works, it works better than other models. Same is true in general about any parametric model in comparison w non parametric approaches
+
+# 4. Classification
+
+## 4.1 Otto Product Classification Example
+
+In this example we use data set provided by Otto group for a 2015 Kaggle competition
+
+The Otto Group needed categorizing about 200k unspecified products inot 9 classes based on 93 unspecified features. For simplicity we reduced the number of visitors and the number of classes
+```{r}
+# load libraries
+library(fBasics)
+# load data set
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week7_RandomForest"
+Data = read.csv(paste(datapath,'DTTrain.csv',sep='/'),header=TRUE)
+dim(Data) # 10233 X 95
+# look at the first 5 columsn of data
+kable(head(Data[,1:5],3))
+# last columns of data
+kable(Data[1:3, (ncol(Data)-4):ncol(Data)])
+```
+```{r}
+# Split the data into train(2/3) and test (1/3) sets
+set.seed(13)
+# create a vector that is a sample of 1/3 of the data
+TestInd=sample(nrow(Data), nrow(Data)/3)
+# training inputs are 2/3 of data, without the time row
+xTrain= Data[-testInd, -1]
+# test data inputs are 1/3 of the data from the rnadom sample, without the time row
+xTest=Data[testInd,-1]
+# y train is the target column of data, subsetted 2/3
+yTrain=as.factor(Data$target[-testInd])
+# y test is the 1/3 of the target column
+yTest=Data$target[testInd]
+
+```
+
+# 4.1.1 Random Forest
+
+Fit Random forest to the train data and make prediction on the test data
+
+```{r}
+rfOtto <- randomForest(target~., data=xTrain, ntree=100)
+rfPred <- predict(rfOtto, newdata=xTest, type="prob")
+head(rfPred)
+```
+Use multiclass logloss for estimating prediction quality
+Calculate it for random forest
+```{r}
+library(dummies)
+```
+Create matrix of true values indicators using function dummy.data.frame from library dummies
+```{r}
+rf_target_IndMat<-dummy.data.frame(data=as.data.frame(yTest), 
+                                     sep="_", verbose=F, 
+                                     dummy.class="ALL")
+rf_target_IndMat[1:10,]
+dim(rf_target_IndMat)
+(rfLogLoss = MultiLogLoss(rf_target_IndMat,rfPred))
+rfLogLoss <-0.3973357 
+```
+### 4.1.2 Gradient boosting
+
+Function xgboost() accepts numeric matrices(not data frames as input data and class labels should be integers starting from zero. So we need some conversion)
+
+```{r}
+xgbTrain <- data.matrix(xTrain[,-ncol(xTrain)])
+xgbTest <- data.matrix(xTest[, -ncol(xTest)])
+yTrain <- as.integer(yTrain)-1
+yTest <- as.integer(yTest)-1
+table(yTrain)
+dim(xgbTrain) #6822  x 93
+xgbTrain[1:5,1:5]
+length(yTrain)
+```
+
+```{r}
+# set number of classes to 5
+numClasses = max(yTrain) +1
+# set parameters
+param <- list("objective"="multi:softprob", 
+              "eval_metric" = "mlogloss",
+              "num_class"= numClasses)
+```
+
+The choice of objective = mulit softprob represents generalization of logistic link into multiple classes and returns a matrix of class probabilites as opposed to objective= multi softmax which returns the class of maximum probability.
+
+Sometimes it is important to use cross-validation to examine the model, for example in order to find optimal number of iterations.
+
+In library xgboost this is done by function xgb.cv()
+
+Fit boosting model
+
+```{r}
+cv.nround=10
+cv.nfold=3
+set.seed(1)
+(bst.cv=xgb.cv(param=param, data=xgbTrain, label=yTrain, 
+               nfold=cv.nfold, nrounds=cv.nround, verbose = FALSE))
+```
+Since xerror continues decreasing in the process of cross validation, we know that the model is not over-fitting. But this also may mean that the fit can be better. Make prediction with this number of rounds
+```{r}
+# run xgboost with 10 rounds
+bst = xgboost(param=param, data = xgbTrain, label = yTrain, 
+              nrounds=cv.nround,verbose=FALSE)
+# use bst model to predict on test set
+xgbPred <- matrix(predict(bst, xgbTest), ncol = numClasses, byrow = TRUE)
+# return head of predictions
+head(xgbPred)
+```
+
+Compare prediction quality of random forest and gradient boosting
+```{r}
+gb_target_IndMat <- dummy.data.frame(data=as.data.frame(yTest),
+                                     sep="_", verbose=FALSE,
+                                     dumm.class="ALL")
+print(list(RF=rfLogLoss, XGB=MultiLogLoss(gb_target_IndMat, xgbPred)))
+print(list(RF=rfLogLoss, XGB=0.3182422))
+```
+
+## 4.2 Identification of Spoken Letters (ISOLET) Example
+
+Data for this example are from UCI repository: Lichman, M. (2013), UCI Machine Learning Repository. Irvine, CA: University of California, School of Information and Computer Science
+The data set is ISOLET (Isolated Letter Speech Recognition).
+
+Data Set Information:
+
+This data set was generated as follows. 150 subjects spoke the name of each letter of the alphabet twice. Hence, we have 52 training examples from each speaker.
+The data contain different characteristics of the sounds, for example characteristics of waveforms.
+The features include spectral coefficients; contour features, sonorant features, pre-sonorant features, and post-sonorant features.
+Exact order of appearance of the features is not known.
+
+The speakers are grouped into sets of 30 speakers each, and are referred to as isolet1, isolet2, isolet3, isolet4, and isolet5.
+The data appear in "isolet1+2+3+4.data" in sequential order: first the speakers from isolet1, then isolet2, and so on.
+The test set, "isolet5", is a separate file.
+
+The total number of observations in ISOLET should be 150×26×2=7800150×26×2=7800. Of them 6238 are in the training set and 1559 are in the test set. Three observations are missing for some reason.
+
+```{r}
+# install libraries
+library("ggplot2")
+library('gbm')
+```
+
+
+```{r}
+# Read in the data
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week7_RandomForest/"
+
+# Read in the training set
+dTrain = read.table(paste0(datapath,"isolet1234.data"),
+              header=FALSE,sep=',',
+              stringsAsFactors=FALSE,blank.lines.skip=TRUE)
+
+# create a column called "is Test"
+dTrain$isTest <- FALSE
+
+# read in the test set
+dTest = read.table(paste0(datapath,"isolet5.data"),
+              header=FALSE,sep=',',
+              stringsAsFactors=FALSE,blank.lines.skip=TRUE)
+
+# create a column called "is Test"
+dTest$isTest <- TRUE
+
+# combine the sets
+d <- rbind(dTrain,dTest)
+dim(d) # 7797 x 619
+
+# return 5 rows, 10 columns of d
+d[1:5, 1:10]
+
+# return 5 rows of last 10 columns of d
+d[1:5, 610:619]
+
+# remove objects
+rm(list=c('dTest','dTrain'))
+```
+Make column 618 letters instead of letter numbers
+Select only rows with letters m and n
+Turn the column into a logical variable where n=  True
+
+```{r}
+# convert numbers to letters
+d$V618 <- letters[d$V618]
+
+# store all column names in a vector for building the formula
+vars <- colnames(d)[1:617]
+
+# return the head of vars
+head(vars)
+
+yColumn <- 'isLetter'
+
+
+d <- d[d$V618 %in% c('m','n'),,drop=FALSE]
+dim(d)
+d[,yColumn] <- d[,'V618']=='n'
+head(d[,yColumn])
+```
+
+Run gradient boosting algorithm using gbm() 
+
+```{r}
+# First create formula variable for future use
+formula <- paste(yColumn, paste(vars, collapse = ' + '), sep= ' ~ ')
+```
+2 ways to call the function
+
+gbm and gbm.fit
+
+gbm.fit is faster
+Parameter n.trees tells how many trees to fit in the algorithm.
+Parameter cv.folds is the number of folds in cross validation.
+Parameter interaction.depth tells how many splits each learner tree will have.
+Let KK be the interaction.depth, then the number of nodes NN and leaves LL (i.e terminal nodes) are respectively given by: N=2K+1???1, L=2KN=2K+1???1, L=2K So, for K=1K=1 there will be 3 nodes total, 2 of them will be leaves.
+Parameter shrinkage sets the rate of learning by each learner. The smaller the shrinkage rate - the slower the algorithm learns which means better quality, but longer time.
+Try to experiment with shrinkage.
+
+The second call is commented out.
+Run gbm() using the first call.
+```{r}
+# do the GBM modeling
+#help(gbm)
+# modelGBM <- gbm.fit(x=d[!d$isTest,vars,drop=FALSE],
+#                     y=d[!d$isTest,yColumn],
+#          distribution='bernoulli',
+#          n.trees=400,
+#          interaction.depth=3,
+#          shrinkage=0.05,
+#          bag.fraction=0.5,
+#          keep.data=FALSE)
+startTime=proc.time()
+modelGBM <- suppressWarnings(
+  gbm(as.formula(formula),
+      data=d[!d$isTest,,drop=FALSE],
+      distribution='bernoulli',
+      n.trees=400,
+      interaction.depth=3,
+      shrinkage=0.05,
+      bag.fraction=0.5,
+      keep.data=T,
+      cv.folds=5,
+      verbose=F))
+stopTime = proc.time()
+(timeElapsed<-stopTime-startTime)
+```
+The object returned is of class gbm
+```{r}
+modelGBM
+class(modelGBM)
+names(modelGBM)
+head(modelGBM$fit)
+modelGBM$trees[1:2]
+```
+Variable modelGBM$trees returns long list of all generated trees. Only the first 2 trees are shown here.
+It is more informative to look at individual trees using pretty.gbm.tree().
+```{r}
+pretty.gbm.tree(modelGBM,1)
+pretty.gbm.tree(modelGBM,2)
+```
+
+pretty.gbm.tree returns a data frame.
+Each row corresponds to a node in the tree.
+Columns indicate:
+
+  -SplitVar: index of which variable is used to split. -1 indicates a terminal node
+  -SplitCodePred: if the split variable is continuous then this component is the split point.      If the split variable is categorical then this component contains the index of       object$c.split that describes the categorical split.
+  If the node is a terminal node then this is the prediction
+  -LeftNode the index of the row corresponding to the left node. 
+  -RightNode the index of the row corresponding to the right node 
+  -ErrorReduction the reduction in the loss function as a result of splitting this node.      
+  -Weight the total weight of observations in the node. If weights are all equal to 1 then this is the number of observations in the node
+
+A very useful function is gbm.perf().
+It shows what number of trees would be sufficient to generate without taking risk of over-fitting.
+The two curves are train error (black) and validation error.
+While train error continues to decline the validation error stabilizes.
+
+```{r}
+nTrees <- gbm.perf(modelGBM)
+print(nTrees)
+```
+Probably, the most useful methods of all (as usual) is the summary.
+Function summary() shows relative importance of variables.
+Add vector of cumulative sums of importance index, plot cumulative sums, see which variables were most important.
+
+```{r}
+(relImport<-summary(modelGBM))
+relImport$cumSum<-cumsum(summary(modelGBM)$rel.inf)
+plot(relImport$cumSum)
+head(relImport,50)
+```
+Method predict() returns probabilities of classes.
+
+```{r}
+d$modelGBM <- predict(modelGBM,newdata=d,type='response',
+                      n.trees=nTrees)
+head(predict(modelGBM))
+
+showPred<-cbind(Response=d$isLetter*1,Predict=d$modelGBM)
+showPred[order(d$isLetter*1),][1:10,]
+# Plot 
+matplot(1:length(showPred[,1]),showPred[order(d$isLetter*1),],pch=1,ylab="Probability",xlab="Index")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
