@@ -1,0 +1,687 @@
+---
+title: "ML Workshop 1 Week8"
+author: "John Navarro"
+date: "August 11, 2017"
+output: pdf_document
+---
+
+# 6. Regression
+
+## 6.1 Example. Predicting Baseball Players Salaries
+
+```{r}
+# install libraries
+library(ISLR)
+library(knitr)
+library(e1071)
+library(ggplot2)
+```
+```{r}
+# Remove incomplete cases
+Hitters <- na.omit(Hitters)
+
+# log transform to make it more normally distributed
+Hitters$Salary <- log(Hitters$Salary)
+
+# Display the head of the transformed data
+kable(head(Hitters,3))
+```
+
+Fit the model by calling svm() function. The function runs support vector regression, but it will automatically choose SVM if it detects that the data are categorical(if the variable is a factor in R).
+
+```{r}
+# Fit svm 
+svmHitters <- svm(Salary~., Hitters)
+
+# Calculate the mean squared error 
+cat("MSE = ", sum(svmHitters$residuals^2)/nrow(Hitters))
+
+# print the summary of the model
+summary(svmHitters)
+
+# return the attributes of the model
+names(svmHitters)
+```
+
+With even default parameters we got better results than with random forest (0.1856038)
+
+## 6.2 Example with Large number of predictors
+
+```{r}
+# set the number of observations
+N=500
+
+
+# set seed for reproducibility
+set.seed(0)
+
+# Use a random normal distribution with mean0 and sd 1 for 500 values
+Epsilon <- rnorm(N,0,1)
+
+# Create a distribution with mean 0, sd 2, for 250000 values
+X <- rnorm(N*N, 0,2)
+
+# reshape X into a matrix(NxN)
+dim(X) <- c(N,N)
+
+# reassign column names
+colnames(X) <- paste0("X", 1:N)
+
+# create slopes as a uniform distribution from 1 to 3, 500 slopes
+slopesSet <- runif(N, 1,3)
+
+# use matrix multiplication to create the Y values
+Y <- sapply(2:N, function(z) 1+X[,1:z]%*%slopesSet[1:z] +Epsilon)
+
+# print the head of the X values
+head(X[,1:5])
+```
+
+```{r}
+# set m equal to 440, reduce the number of predictors, make it less than the observations
+m=440
+
+# create a smaller data set
+completeModelDataFrame <- data.frame(Y=Y[,m-1], X[,1:m])
+
+# Fit the model
+svmManyRegressors <- svm(Y~., completeModelDataFrame)
+cat("MSE = ", sum(svmManyRegressors$residuals^2)/nrow(completeModelDataFrame))
+```
+
+Far from linear regression but much better than any of the tree methods
+RF : 7050.775
+xgb.cv : 0 , error, cannot handle the data
+
+# 7. Classification
+
+## 7.1 Simple example
+
+Create a classification example with 4 points and 2 classes
+
+```{r}
+dat<-rbind(c(1,1,1),
+           c(2,1,0),
+           c(2,2,1),
+           c(1,2,0))
+
+# rename the columns
+colnames(dat)<-c("X1","X2","Class")
+
+# transorm to a data frame
+dat<-as.data.frame(dat)
+
+# make Class a factor for classification
+dat$Class<-as.factor(dat$Class)
+
+# print data frame
+dat
+```
+
+```{r}
+plot(dat$X1, dat$X2, col="orange", pch=16, ylim=c(0.5,2.5), xlim=c(0.5,2.5))
+points(dat$X1[dat$Class==1], dat$X2[dat$Class==1], col="blue", pch=16)
+```
+
+1. Fit SVM Classifier with linear kernel
+
+```{r}
+m1 <- svm(Class~. , data=dat, kernel="linear")
+(m1.pred <- predict(m1))
+plot(m1, dat)
+```
+
+Linear kernel did not work because the points are not linearly separable.
+
+2. Use polynomial kernel of degree 2.
+
+```{r}
+m1<-svm(Class~.  , data=dat,kernel="polynomial", degree=2)
+(m1.pred<-predict(m1))
+plot(m1, dat)
+```
+Second degree polynomial kernel gives the correct solution.
+
+3. Use polynomila kernal with degree3
+
+```{r}
+m1<-svm(Class~.  , data=dat,kernel="polynomial", degree=3)
+(m1.pred<-predict(m1))
+plot(m1, dat)
+```
+Obviously the higher polynomila degree is not the beetter
+
+4. Use radial(Gaussian) kernel
+```{r}
+m1<-svm(Class~.  , data=dat,kernel="radial")
+(m1.pred<-predict(m1))
+plot(m1, dat)
+```
+This kernel is the most universal
+
+## 7.2 Sine wave example
+
+Use simple example from lecture 7 with trigonometic signal plus noise, make one class a sine wave and a second class a cosine wave
+
+```{r}
+# set the seed for reproducibility
+set.seed(1180)
+
+# create a sequencee from 0 to 2pi, by intervals of .01
+x<-seq(0,2*pi,by=.01)
+
+# assign the standard deviation of the errors to 0.5
+sigmaEps<-.5
+
+# create errors using a normal distribution with mean of 0, and st dev of sigmaEPS
+eps<-rnorm(length(x),0,sigmaEps)
+
+# create the signal by taking the sin of x plus the noise
+signal<-sin(x)+eps
+
+# create a data frame of all the x's and the signals associated with them
+data1<-data.frame(x=x,signal=signal)
+
+# print the head of the data frame
+head(data1)
+
+# plot data
+plot(data1)
+```
+```{r}
+# Create the cosine data
+data2 <- data.frame(x=x, signal=cos(x)+eps)
+plot(data2)
+```
+Plot the data together
+```{r}
+plot(data1, pch=20, col="orange")
+points(data2, pch=20, col="blue")
+```
+Combine the data into one data frame
+```{r}
+data1$class <- 1
+data2$class <- 2
+dataClasses <- rbind(data1, data2)
+head(dataClasses)
+tail(dataClasses)
+```
+
+### 7.2.1 SVM with radial kernel
+
+Radial kernel is the default 
+
+K(u,v) = exp(-gamma|u-v|^2)
+
+```{r}
+# fit the svm using radial kernel
+svmFit.radial <- svm(class~., data=dataClasses)
+
+# Print the summary of the model
+summary(svmFit.radial)
+
+# print the attributes of the model
+names(svmFit.radial)
+
+# Print the head of the decision values
+head(svmFit.radial$decision.values)
+
+# Plot the decision values
+plot(dataClasses[svmFit.radial$decision.values<0,1:2],pch=20,col="orange")
+points(dataClasses[svmFit.radial$decision.values>0,1:2],pch=20,col="blue")
+```
+ 
+### 7.2.2 SVM with sigmoid kernel
+
+Sigmoid kernel :   K(u,v) = tanh(gamma x u %*% v + coef0)
+
+```{r}
+# fit svm with sigmoid kernel
+svmFit.sigmoid <- svm(class~., data = dataClasses,kernel="sigmoid")
+
+# return the summary of the model
+summary(svmFit.sigmoid)
+
+# plot the decision values
+plot(dataClasses[svmFit.sigmoid$decision.values<0,1:2],pch=20,col="orange")
+points(dataClasses[svmFit.sigmoid$decision.values>0,1:2],pch=20,col="blue")
+```
+
+### 7.2.3 SVM with linear kernel
+
+Linear kernel has formula
+
+K(u,v)=u%*%v
+
+```{r}
+# fit svm with sigmoid kernel
+svmFit.linear <- svm(class~., data = dataClasses,kernel="linear")
+
+# return the summary of the model
+summary(svmFit.linear)
+
+# plot the decision values
+plot(dataClasses[svmFit.linear$decision.values<0,1:2],ylim=c(-3,3),pch=20,col="orange")
+points(dataClasses[svmFit.linear$decision.values>0,1:2],pch=20,col="blue")
+```
+
+### 7.2.4 SVM with polynomial kernel
+
+Use polynomial kernel of degree 3 (default)
+
+K(u,v)=(gamma x u %*% v + coef0)^d , where d=3 is the degree of the polynomial
+
+```{r}
+# Fit svm using polynomial kernel of degree 3
+svmFit.polynomial <- svm(class~., data = dataClasses,kernel="polynomial",degree=3)
+
+# Print the summary of the fit
+summary(svmFit.polynomial)
+
+# Plot the decision values
+plot(dataClasses[svmFit.polynomial$decision.values<0,1:2],pch=20,col="orange")
+points(dataClasses[svmFit.polynomial$decision.values>0,1:2],pch=20,col="blue")
+```
+polynomial kernel of degree2 gives
+
+```{r}
+# Fit svm using a polynomial kernel of degree 2
+svmFit.polynomial <- svm(class~., data = dataClasses,kernel="polynomial",degree=2)
+
+# Print the summary of the model
+summary(svmFit.polynomial)
+
+# plot the decision values
+plot(dataClasses[svmFit.polynomial$decision.values<0,1:2],pch=20,col="orange")
+points(dataClasses[svmFit.polynomial$decision.values>0,1:2],pch=20,col="blue")
+```
+Polynomial kernel of degree 4 gives:
+```{r}
+# Fit svm with polynomial kernel of degree 4
+svmFit.polynomial <- svm(class~., data = dataClasses,kernel="polynomial",degree=4)
+
+# print the summary of the model
+summary(svmFit.polynomial)
+
+# plot the decision values of the model
+plot(dataClasses[svmFit.polynomial$decision.values<0,1:2],pch=20,col="orange")
+points(dataClasses[svmFit.polynomial$decision.values>0,1:2],pch=20,col="blue")
+```
+
+# 7.3 Example: Galton's Data
+
+Galton's data on the heights of parent and their children can be found in the pachage HistData. This data set lists the individual observations for 934 children in 205 families on which Galton (1886) based his cross-tabulation
+
+```{r}
+library(HistData)
+data(GaltonFamilies)
+head(GaltonFamilies)
+```
+
+Families are listed in decreasing order of midparentHeight. Reshuffle them to ensure correct cross validation procedure later.
+
+```{r}
+# set the seed for reproducibility
+set.seed(0)
+
+# Build the data frame
+Data <- GaltonFamilies[sample(nrow(GaltonFamilies)), c("midparentHeight", "childHeight", "gender")]
+
+# display table of the data
+kable(head(Data, 5))
+```
+
+Note that mid-parent height is calculated as midparentHeight = (father + 1.08*mother)/2
+
+Predict gender of the child by her or his height and mid-parent height. Plot the data scatterplot.
+
+```{r}
+Gender <- as.character(Data$gender)
+ggplot(Data, aes(x=midparentHeight, y=childHeight, color=Gender)) + 
+  geom_point(shape=16)+scale_color_hue(l=65, c=100)+ 
+  scale_color_manual(values=c("orange", "blue"))
+```
+
+Recall that logistic regression classification accuracy of this data, calculated in the lecture Classification and REgression Trees was 0.881
+
+Partition data into train(2/3) and test(1/3) sets
+
+```{r}
+# sample 1/3 of the data
+testInd <- sample(nrow(Data), trunc(nrow(Data)/3))
+
+#subset Data that does not line up with testInd as training set
+xTrain=Data[-testInd, ]
+
+# subset the dat for the test set
+xTest=Data[testInd,]
+```
+
+Fit the model with default parameters to the train set and predict classes using the test set. The class label column should not be used the test data
+```{r}
+# fit svm
+svmFit <- svm(gender~., data=xTrain)
+
+# predict gender on the test set, exclude the gender column
+predict <- predict(svmFit, xTest[,!names(xTest)=="gender"])
+
+```
+
+Function table() returns the confusion matrix
+```{r}
+# use predictions and gender column of test set to plot confusion matrix
+(conf <- table(pred=predict, true =xTest[,"gender"]))
+```
+The prediction accuracy can be calcualted by
+```{r}
+classAgreement(conf)$diag
+```
+Now play with parameters of the method
+
+The package provides function tune which tunes hyperparameters of statistical methods using a grid search over supplied parameter ranges.
+
+Optimize for parameters gamma and cost.
+
+It is important to understand the influence of these two parameters, because the accuracy of an SVM model is largely dependent on them.
+
+Argument cost allows specifying the cost of a violation to the margin (see parameter C above).
+If cost is too large, there is a high penalty for misclassified observation which leads to potential overfitting.
+Conversely, if the cost is too small, the fit may be bad. Argument gamma affects smoothness of the separating surface by setting limits for influence of each observation on neighbors.
+
+```{r}
+# tune the model with ranges of gamma and cost
+svmTuned <- tune.svm(gender~., data = Data, gamma = 10^(-4:-1), cost = 5*(1:4))
+summary(svmTuned)
+```
+The object svmTuned contains among others the component best.parameters
+```{r}
+svmTuned$best.parameters
+```
+It also contains best.model- the model trained on the complete training data using the best parameters. The following command will produce the graph in which support vectors are shown as'X'. True classes are highlighted through symbol color and predicted class regions are visualized using colored background
+```{r}
+plot(svmTuned$best.model, xTrain)
+```
+Finally, predict test set classes and get the accuracy
+
+```{r}
+predict <- predict(svmTuned$best.model, xTest[,!names(Data)=="gender"])
+classAgreement(table(pred=predict, true=xTest[,"gender"]))$diag
+```
+
+##7.4 Example Rectangular class domain
+
+Simulate the data with rectangular class shape, like in lecture 6 when we examined tree classification.
+Each observation is three-dimensional vector with two numeric features and one categorical response (type) with possible values 'Positive' or 'Negative'.
+The goal is to predict type on the basis of first two features.
+
+Simulate the data.
+```{r}
+N = 1000
+xPos = 0.2
+yMinPos = 0.2
+yMaxPos = 0.7
+set.seed(0)
+newData = data.frame(y=runif(N),x=runif(N))
+newData$type = with(newData,ifelse(x>xPos & y>yMinPos & y<yMaxPos,
+                        'Positive','Negative'))
+```
+Add noise and reshuffle
+```{r}
+n = N/10
+newData$type[1:n] = c('Positive','Negative')[1+rbinom(n, 1, 0.5)]
+newData = newData[sample(nrow(newData)),] 
+head(newData)
+```
+Plot the data
+```{r}
+rect <- ggplot(newData, aes(x=x, y=y, color=type)) + 
+  geom_point(shape=16)+scale_color_hue(l=65, c=100)+ 
+  scale_color_manual(values=c("orange", "blue"))
+rect 
+```
+Partition the data into train (2/3) and test (1/3) sets.
+Fit SVM model with default parameters to the data.
+Then try to improve the model, tuning gamma and cost parameters.
+Use different kernels and compare the results.
+
+Make variable type a factor
+Create test and train samples by randomly selecting one third of observations as test and the rest as train samples; use  set.seed(7849) for better reproducibility.
+Fit SVM to train data with some gamma, cost and a choice of kernel
+Predict type of the test data with actual column type excluded
+Calculate confusion table
+```{r}
+library(e1071)
+# Make variable type a factor
+newData$type <- as.factor(newData$type)
+
+# set the seed for reproducibility
+set.seed(7849)
+
+# Create test and train sets
+# sample 1/3 of the data
+train_ind <- sample(seq_len(nrow(newData)), size=667)
+
+#subset Data for the training set
+train <- newData[train_ind, ]
+
+# subset the dat for the test set
+test <- newData[-train_ind, ]
+
+# Fit svm using radial kernel
+svmFit.radial <- svm(type~., data =train, kernel="radial")
+
+# return the summary of the model
+summary(svmFit.radial)
+
+# Predict type of the test data with actual column type excluded
+predict <- predict(svmFit.radial, test[,!names(test)=="type"])
+
+# calculate confusion table
+(conf <- table(pred=predict, true=test[,"type"]))
+
+# return the accuracy
+classAgreement(conf)$diag
+
+# Tune the model using range of gammas and costs
+svmTuned <- tune.svm(type~., data=train, gamma =10^(-4:-1), cost = 5*(1:4))
+
+# returns summary of tuned models
+summary(svmTuned)
+
+# Predict type of the test data with actual column type excluded
+predict <- predict(svmTuned$best.model, test[,!names(test)=="type"])
+
+# calculate confusion table
+(conf <- table(pred=predict, true=test[,"type"]))
+
+# return the accuracy
+classAgreement(conf)$diag
+
+# plot the results of the classification
+plot(svmTuned$best.model, train)
+```
+
+Summary
+
+The last two examples have been already used in lecture 6.
+Logistic regression classified better the Galton's data, but did poorly on rectangular class boundary shape.
+Tree methods did not work well with the Galton's data but successfully identified rectangular class domain.
+SVM appears to be rather flexible showing winning accuracy in both cases.
+
+## 7.5 Otto Product Classification Example
+
+Consider again Otto Group Product Classification Example and compare SVM results with performance of random forest and gradient boosting.
+
+```{r}
+# load libraries
+library(fBasics)
+# load data set
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week7_RandomForest"
+Data = read.csv(paste(datapath,'DTTrain.csv',sep='/'),header=TRUE)
+dim(Data) # 10233 X 95
+# look at the first 5 columsn of data
+kable(head(Data[,1:5],3))
+# last columns of data
+kable(Data[1:3, (ncol(Data)-4):ncol(Data)])
+```
+
+Split into train and test sets
+
+```{r}
+# Split the data into train(2/3) and test (1/3) sets
+set.seed(13)
+# create a vector that is a sample of 1/3 of the data
+TestInd=sample(nrow(Data), nrow(Data)/3)
+# training inputs are 2/3 of data, without the time row
+xTrain= Data[-testInd, -1]
+# test data inputs are 1/3 of the data from the rnadom sample, without the time row
+xTest=Data[testInd,-1]
+# y train is the target column of data, subsetted 2/3
+yTrain=as.factor(Data$target[-testInd])
+# y test is the 1/3 of the target column
+yTest=Data$target[testInd]
+
+```
+
+Fit SVM
+
+```{r}
+# fit svm (radial) for Otto data
+svm.Otto <- svm(target~., data=xTrain)
+
+# return the summary of the model
+summary(svm.Otto)
+
+# Predict type of the test data with actual column type excluded
+predict <- predict(svm.Otto, xTest[,!names(xTest)=="target"])
+
+# calculate confusion table
+(conf <- table(pred=predict, true=xTest[,"target"]))
+
+# return the accuracy
+classAgreement(conf)$diag
+```
+
+Tune the SVM model
+```{r}
+# Tune the model using range of gammas and costs
+svmTuned.Otto <- tune.svm(target~., data=xTrain, gamma =10^(-4:-1), cost = 5*(1:4))
+
+# returns summary of tuned models
+summary(svmTuned.Otto)
+
+# Predict type of the test data with actual column type excluded
+predict <- predict(svmTuned.Otto$best.model, test[,!names(test)=="type"])
+
+# calculate confusion table
+(conf <- table(pred=predict, true=test[,"type"]))
+
+# return the accuracy
+classAgreement(conf)$diag
+
+```
+
+
+
+
+## 7.6 Data
+
+Load the data set
+```{r}
+# Load the library fBasics
+library(fBasics)
+```
+```{r}
+# read the csv into "Data" dataframe
+
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week7_RandomForest"
+Data = read.csv(paste(datapath,'DTTrain.csv',sep='/'),header=TRUE,
+                stringsAsFactors = TRUE)
+
+# print the dimensions of Data
+dim(Data)
+
+# print the head of data
+kable(head(Data[,1:5],3))
+
+kable(Data[1:3,(ncol(Data)-4):ncol(Data)])
+```
+
+Partition the data into train (2/3) and test(1/3)
+
+```{r}
+set.seed(0)
+testInd = sample(nrow(Data), trunc(nrow(Data)/3))
+xTrain = Data[-testInd,-1]
+xTest = Data[testInd,-1]
+```
+
+## 7.7 Fitting SVM
+
+Fit SVM to the train data and make prediction on the test data.
+Function predict() has logical parameter probability indicating that required return is in the format of class probabilities.
+It is possible only if the model was fitted with the probability option enabled. Recall that SVM does not calculate probabilities of classes naturally, it is done "outside" the model.
+```{r}
+svmFit <- svm(target~., data = xTrain,probability = TRUE)
+predict <- predict(svmFit, xTest[,!names(xTest)=="target"],
+                   probability = TRUE)
+```
+
+If probability is TRUE, predict() includes "probabilities" attribute containing a n×kn×k matrix (nn number of predicted values, kk number of classes) of class probabilities.
+
+```{r}
+prob = attr(predict, "probabilities")
+kable(head(prob,3))
+```
+
+The class columns come out of the function in reversed order, restor the order
+```{r}
+prob = prob[,sort(colnames(prob))]
+kable(head(prob,3))
+```
+
+Use multiclass logloss for estimating prediction quality
+Calcualte accuracy and logloss
+```{r}
+library(dummies)
+library(MLmetrics)
+```
+
+```{r}
+# create confusion matrix and accuracy measure
+conf <- table(pred = predict, true = xTest[,"target"])
+classAgreement(conf)$diag
+
+# create a data frame and print the Multi log loss
+target_IndMat<-dummy.data.frame(data=as.data.frame(xTest[,"target"]),
+                                sep="_", verbose=F,dummy.class="ALL")
+print(MultiLogLoss(target_IndMat,prob))
+```
+With default parameters SVM outperforms random forest and gradient boosting.
+However, it is still not easy to select the right method for the data: there are many parameters to be tuned, especially in SVM and gradient boosting.
+
+Visualize manifold of class domain shapes created by SVM.
+
+
+
+```{r}
+xTrain = data.frame(mean=rowMeans(Data[,-c(1,ncol(Data))]),
+                    numzeros=rowSums(Data==0),
+                    target=Data$target)
+svmFit <- svm(target~., data = xTrain)
+plot(svmFit,xTrain)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
