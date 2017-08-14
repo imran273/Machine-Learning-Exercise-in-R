@@ -1,0 +1,218 @@
+---
+title: "ML Week 8 Workshop 2"
+author: "John Navarro"
+date: "August 11, 2017"
+output: pdf_document
+---
+
+This project compares gradient boosting and SVM models on ISOLET data using package caret.
+
+# 1. Data
+
+```{r}
+# install libraries
+suppressWarnings(library(caret))
+suppressWarnings(library(kernlab))
+suppressWarnings(library(gbm))
+suppressWarnings(library(ROCR))
+library(plyr)
+```
+
+Prepare the data
+
+```{r}
+# Read in the data
+datapath <- "C:/Users/JohntheGreat/Documents/MSCA/MachineLearning/Week7_RandomForest/"
+
+# Read in the training set
+dTrain = read.table(paste0(datapath,"isolet1234.data"),
+              header=FALSE,sep=',',
+              stringsAsFactors=FALSE,blank.lines.skip=TRUE)
+
+# create a column called "is Test"
+dTrain$isTest <- FALSE
+
+# read in the test set
+dTest = read.table(paste0(datapath,"isolet5.data"),
+              header=FALSE,sep=',',
+              stringsAsFactors=FALSE,blank.lines.skip=TRUE)
+
+# create a column called "is Test"
+dTest$isTest <- TRUE
+
+# combine the sets
+d <- rbind(dTrain,dTest)
+dim(d) # 7797 x 619
+
+# return 5 rows, 10 columns of d
+d[1:5, 1:10]
+
+# return 5 rows of last 10 columns of d
+d[1:5, 610:619]
+
+# remove objects
+rm(list=c('dTest','dTrain'))
+
+# convert numbers to letters
+d$V618 <- letters[d$V618]
+
+# store all column names in a vector for building the formula
+vars <- colnames(d)[1:617]
+
+# return the head of vars
+head(vars)
+
+# assign string to yColumn variable
+yColumn <- 'isLetter'
+
+#remove all letters except m and n from the combined dataset
+d <- d[d$V618 %in% c('m','n'),,drop=FALSE]
+
+# return the dimensions of new d
+dim(d) #599 x 619
+
+# Set the train dataset
+trainX = d[!d$isTest,vars]
+
+# Set the train Y vector
+trainY = as.factor(d[!d$isTest,'V618'])
+
+# Set the test set
+testX = d[d$isTest,vars]
+
+# Set the test Y vector
+testY = as.factor(d[d$isTest,'V618'])
+```
+Prepare training scheme for tuning parameters using 5 fold cross validation
+
+```{r}
+ctrl <- trainControl(method = "cv", number=5, classProbs = TRUE)
+```
+
+# SVM with radial kernel
+
+SVM with radial kernel model has 2 main parameters
+  - Parameter C is responsible for cost of misclassification in the "soft margin" veersion of SVM. In other words it controls the trade off between bias and variance. A large C gives low bias and high variance, by penalizing more for misclassification. A small C allows higher bias and makes variance lower
+  
+    - Parameter gamma defines smoothness of classification rule or how far the influence of a single observation goes. Low values of gamma expands the radius of influence and small values decrease it. Parameter gamma is inverse of radius of influnece of sigma
+    
+      gamma = 1/ sigma, where sigma is a tuning parameter for radial SVM kernel in packagee kernlab used by caret for SVM
+      
+Function train() from library caret searches parameters on the grid tuneGrid.
+Keep parameter sigma constant and change parameter C as sequence 1,2,4,8,16
+Data are normalized before fitting.
+By default optimal classification model is selected by finding maximum of accuracy.
+
+```{r}
+# set seed for reproducibility
+set.seed(0)
+
+# using train from caret, run optimization on svm hyper parameters
+svmFitIso <- train(trainX, trainY,
+                   method="svmRadial",
+                   tuneGrid=data.frame(.C=c(1,2,4,8,16),
+                                       .sigma = .001),
+                   trControl=ctrl,
+                   preProc=c("center", "scale"))
+
+# Print summary of the results
+print(svmFitIso)
+
+# return results sorted
+head(with(svmFitIso, results[order(results$Kappa, decreasing=T),]))
+
+# Plot the accuracy of the model given each Cost value
+plot(svmFitIso)
+```
+Function predict() gives class prediction for a new sample
+```{r}
+svmPred <- predict(svmFitIso, d[d$isTest, vars])
+
+# Get Confusion matrix of test data
+table(predict(svmFitIso, d[d$isTest, vars]), testY)
+
+# Calculate the prediction probabilities of test data classes
+probs <- predict(svmFitIso, d[d$isTest, vars], type="prob")[,1]
+
+# print head of probs
+head(probs)
+```
+Plot the ROC curveand evaluate AUC (Area under the curve)
+
+```{r}
+isPositiveClass <- testY=='m' # for an ROC curve there is a positive class
+
+pred <- prediction(probs, isPositiveClass)
+
+# Create ROC curve
+perf <- performance(pred, 'tpr', 'fpr')
+
+# Plot ROC curve
+plot(perf, lwd=2, col=3, main='ROC Curve')
+
+# Print the area under the curve
+(AUC <- attributes(performance(pred, 'auc'))$y.value[[1]]) 
+```
+
+# 3 Gradient boosting
+
+Now use caret for tuning parameters of Gradient Boosting Machine and compare results with SVM
+
+```{r}
+set.seed(0)
+gbm.Grid <- data.frame(n.trees = (10:12)*25, interaction.depth = 5,
+                       shrinkage=.1, n.minobsinnode=2)
+gbmFitIso <- train(trainX, trainY,
+                   method="gbm", tuneGrid=gbm.Grid,
+                   trControl=ctrl, verbose=FALSE)
+print(gbmFitIso)
+
+# print confustion matrix of predictions and testY
+table(predict(gbmFitIso, d[d$isTest, vars], type='raw'), testY)
+
+```
+
+# 4 Comparison
+
+Collect resampling results for both models and visualize them
+
+```{r}
+results <- resamples(list(GBM=gbmFitIso, SVM=svmFitIso))
+
+# summary of the distributions
+summary(results)
+
+# visualize with box plots
+bwplot(results)
+
+# visualize with dot plots
+dotplot(results)
+```
+
+We can see that in this example, SVM does a better job than GBM. The SVM model has a higher median and tighter ranges for both Accuracy and Kappa measures, compared to the results from GBM.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
