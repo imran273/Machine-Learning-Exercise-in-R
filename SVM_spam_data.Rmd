@@ -1,0 +1,187 @@
+---
+title: "ML Week 8 Workshop 3"
+author: "John Navarro"
+date: "August 11, 2017"
+output: pdf_document
+---
+
+# Case Study: Spam
+
+# 1 Spam Data
+
+Spam data were collected by Hewlett-Packard Labs. The set contains 4601 emails of types "spam", "non-spam".
+Besides the type in the file there are 57 predictors indicating frequencies of words and characters from vocabulary.
+Help file explains the column meanings:
+
+The first 48 variables contain the frequency of the variable name (e.g., business) in the e-mail. If the variable name starts with num (e.g., num650) the it indicates the frequency of the corresponding number (e.g., 650). The variables 49-54 indicate the frequency of the characters ';', '(', '[', '!', '$', and '#'. The variables 55-57 contain the average, longest and total run-length of capital letters.
+
+Data are available through library kernlab.
+```{r}
+# install libraries
+suppressWarnings(library(e1071))
+suppressWarnings(library(kernlab))
+```
+
+```{r}
+# read in spam data
+data(spam)
+
+# print the head of spam
+head(spam,2)
+
+# check the dimensions of spam
+dim(spam) # 4601 X 58
+```
+
+Prepare train and test samples
+
+```{r}
+# assign number of observations to value N
+N<-length(spam$type)
+
+# assign nTrain to be 2/3s of the data set
+nTrain<-round(2*N/3)
+
+# set seed for reproducibility
+set.seed(19)
+
+# create an index to sample spam
+idxShuffle<-sample(1:N,replace=F)
+
+# subset spam by the index
+spam_sample<-spam[idxShuffle,]
+
+# separate the sample int training set
+spam_train<-spam_sample[1:nTrain,]
+
+# and testing set
+spam_test<-spam_sample[(nTrain+1):N,]
+```
+
+# 2. Fitting SVM with default kernel
+
+Tune SVM with radial kernel (default) like in workshop example with Galton's data.
+Use grid for gamma= 10^(-6:-3) and cost= 10^(1:2)
+
+```{r}
+# set seed for reproducibility
+set.seed(1)
+
+# use svm to fit training data
+svm.fit <- svm(type~., data=spam_train)
+
+# Print summary of the svm model fit
+summary(svm.fit)
+
+# set seed for reproducibility
+set.seed(1)
+
+#grid search
+svmTuned <- tune.svm(type~., data = spam_train, gamma = 10^(-6:-3), cost = 10^(1:2))
+
+# summary of tuned svm model
+summary(svmTuned)
+```
+
+```{r}
+
+# plot the model's performance of gamma vs cost
+
+#plot(m, transform.x=log10, xlab="expression",
+      (log(10)(gamma)), ylab="C")
+
+```
+
+
+```{r}
+# Print the best parameters given by the tuned model
+svmTuned$best.parameters
+
+# print the summary of the best model
+summary(svmTuned$best.model)
+
+# Predict classification on the spam test set using the best model
+pred <- predict(svmTuned$best.model, spam_test)
+
+# Print the confusion matrix
+(acc <- table(pred, spam_test$type))
+
+# print the accuracy
+classAgreement(acc)
+
+```
+
+
+# 3 Experimenting with kernels
+
+```{r}
+# Fit svm with sigmoid kernel
+svm.fit.sig <- svm(type~., data=spam_train, kernel="sigmoid" )
+summary(svm.fit.sig)
+
+#tune the sigmoid model
+svmTuned.sig <- tune.svm(type~., data = spam_train, gamma = 10^(-6:-3), cost = 10^(1:2))
+summary(svmTuned.sig)
+
+# return the best model and create predictions, measure accruacy
+svmTuned.sig$best.parameters
+summary(svmTuned.sig$best.model)
+pred <- predict(svmTuned.sig$best.model, spam_test)
+(acc <- table(pred, spam_test$type))
+```
+
+```{r}
+# linear kernael
+
+svm.fit.linear <- svm(type~., data=spam_train, kernel="linear" )
+summary(svm.fit.linear)
+
+svmTuned.linear <- tune.svm(type~., data = spam_train, gamma = 10^(-6:-3), cost = 10^(1:2))
+summary(svmTuned.linear)
+
+svmTuned.linear$best.parameters
+summary(svmTuned.linear$best.model)
+pred <- predict(svmTuned.linear$best.model, spam_test)
+(acc <- table(pred, spam_test$type))
+classAgreement(acc)
+```
+
+
+```{r}
+# polynomieal kernel deg 3
+
+svm.fit.poly <- svm(type~., data=spam_train, kernel="polynomial", degree=3 )
+summary(svm.fit.poly)
+
+svmTuned.poly <- tune.svm(type~., data = spam_train, gamma = 10^(-6:-3), cost = 10^(1:2))
+summary(svmTuned.poly)
+
+svmTuned.poly$best.parameters
+summary(svmTuned.poly$best.model)
+pred <- predict(svmTuned.poly$best.model, spam_test)
+(acc <- table(pred, spam_test$type))
+```
+
+
+
+```{r}
+# polynomieal kernel deg 2
+
+svm.fit.poly <- svm(type~., data=spam_train, kernel="polynomial", degree=4 )
+summary(svm.fit.poly)
+
+svmTuned.poly <- tune.svm(type~., data = spam_train, gamma = 10^(-6:-3), cost = 10^(1:2))
+summary(svmTuned.poly)
+
+svmTuned.poly$best.parameters
+summary(svmTuned.poly$best.model)
+pred <- predict(svmTuned.poly$best.model, spam_test)
+(acc <- table(pred, spam_test$type))
+```
+
+
+
+```{r}
+
+```
+
