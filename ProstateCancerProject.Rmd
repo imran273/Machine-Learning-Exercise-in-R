@@ -1,0 +1,633 @@
+---
+title: "Enova Assessment Cancer Survival"
+author: "John Navarro"
+date: "September 6, 2017"
+output: pdf_document
+---
+
+# OBJECTIVE
+
+You are trying to determine the 7-year survival of prostate cancer patients. A patient survived if they are still alive 7 years after diagnosis. This means that a patient is counted as dead whether or not the death was due to their cancer. You have been given details about the patients and their cancers to help you with your prediction.
+
+# DIRECTIONS
+
+## Dataset
+
+You have been given a folder labeled participant_files. In it there are two data sets. The set labeled training_data has details of patients, the state of their cancer at time of diagnosis, and some information about the progression of their disease. You will use this data to train any models or create any rules you consider relevant. The second data set, labeled (name)_score, is the set you will score and submit to finish. There is also a file called Data Dictionary.xlsx which contains information about the data in the dataset. 
+
+## Submission
+
+You have forty-eight hours to submit the scored set. A full submission contains the following:
+	The scored data:
+o	Replace (name) with your name
+o	Do NOT change the starting column names. If you do we cannot score your data
+o	Final data set must be in the form csv 
+o	Populate the column urvival_7_years with your prediction. This must be a 0 or a 1, not a probability.
+	A quick (a paragraph or so) description of your prediction process and your final model. This can be in whatever format you like.
+	Any code you used during your prediction process
+
+
+
+```{r, warning=FALSE, include=FALSE}
+# Install Packages
+library(mice)
+library(e1071)
+library(Deducer)
+library(rpart)
+library(rpart.plot)
+library(randomForestSRC)
+library(randomForest)
+library(xgboost)
+```
+
+# Part 1. Preparing the data
+
+Read in the training set and explore the data
+```{r}
+datapath <- "C:/Users/JohntheGreat/Documents/Jobs/Enova/participant_files"
+data<-read.csv(file=paste(datapath,"training_data.csv",sep="/"))
+# Explore the data
+head(data)
+dim(data) # 15385 X 33
+colnames(data)
+str(data)
+# The column race should be a factor not integer
+data$race <- as.factor(data$race)
+# Display how many NA observations are in each column
+na.cols <- sapply(1:ncol(data), function(z) sum(is.na(data[,z])))
+(as.data.frame(rbind(colnames(data),na.cols)))
+```
+
+```{r}
+datapath <- "C:/Users/JohntheGreat/Documents/Jobs/Enova/participant_files/participant_files"
+data<-read.csv(file=paste(datapath,"training_data.csv",sep="/"))
+```
+
+Read in the scoring set and explore the data similarly
+```{r}
+datapath <- "C:/Users/JohntheGreat/Documents/Jobs/Enova/participant_files"
+data.score<-read.csv(file=paste(datapath,"(name)_score.csv",sep="/"))
+# Explore the data
+head(data.score)
+dim(data.score) # 11531 X 33
+colnames(data.score)
+str(data.score)
+# The column race should be a factor not integer
+data.score$race <- as.factor(data.score$race)
+# Display how many NA observations are in each column
+na.cols <- sapply(1:ncol(data.score), function(z) sum(is.na(data.score[,z])))
+(as.data.frame(rbind(colnames(data.score),na.cols)))
+```
+
+We have 16 columns that have NA values. The columns tumor_6_months(18) and psa_6_months(21) both have NAs over 50% of the observations. We will remove these variables, along with id and diagnosis_date since neither of these should be predictive of the 7 year survival.
+After looking at the scoring data, we see that it has about 2/3 the number of observations as the training data, with a similar proportion of NA's in the same columns. The main difference is that survival_1_year is missing in over 50% of the observations. We will have to remove this column as a predictor.
+
+```{r}
+# Remove the five columns: id, diagnosis_date, tumor_6_months psa_6_months and survival_1_year
+data.int <- data[,-c(1,2,18,21,32)]
+head(data.int) # 28 columns
+```
+Next, we will look at the symptoms column, since the data inside it is predictive. We will expand the symptoms column into a binary representation of each symptom, for each observation. Basically, expanding the width of the data set.
+```{r}
+# change each cell to character
+data.int$symptoms <- as.character(data.int$symptoms)
+# create a vector of strings, each element is every symptom in the data set, length 43408
+symptoms <- unlist(strsplit(paste(data.int$symptoms, collapse = ","), ","))
+# select only the unique symptoms, store as a vector
+unique.symptoms <- unique(symptoms)
+# remove the "blank symptom" this is the case where the patient had no symptoms, different from NA
+unique.symptoms <- unique.symptoms[-which(unique.symptoms == "")] # 16 unique symptoms
+# create an empty matrix
+unique.symptoms.mat <- matrix(rep(0, 246160), nrow=nrow(data.int), ncol=length(unique.symptoms))
+# assign a unique symptom to each column of the empty matrix
+colnames(unique.symptoms.mat) <- unique.symptoms
+# bind the variable data with the newly expanded symptoms matrix
+data.int <- cbind(data.int, unique.symptoms.mat)
+# Check each observation's symptoms, if it matches a column, assign a 1, if not, leave as 0.
+for(z in 1:nrow(data.int)){
+    data.int[z, which(colnames(data.int) %in% strsplit(data.int$symptoms[z], ",")[[1]])] <- 1
+}
+# Return the head of the new intermediate dataset
+head(data.int)
+# remove the original symptoms column
+data.int <- data.int[,which(colnames(data.int)!="symptoms")]
+# remove the response variable
+data.unique <- data.int[,which(colnames(data.int)!="survival_7_years")]
+# return head of data.unique, this is the expanded set of predictors that still have NAs
+head(data.unique)
+
+```
+Now that we have expanded the symptoms column and removed the ones that we do not want to use for prediction, we will impute the missing data using the mice() package.
+
+Impute using default methods (pmm for missing integers and logistic regression for missing factors)
+```{r}
+imputed_Data_unique <- mice(data.unique, m=5, printflag=FALSE, seed = 500, maxit=5)
+# Combine the first imputed set with the original data set as data.clean
+data.clean <- complete(imputed_Data_unique)
+# Add the response to the cleaned data set
+survival_7_years=data$survival_7_years
+data.clean <- cbind(data.clean, survival_7_years)
+# return the head of the complete and clean data set. Includes the response variable.
+head(data.clean)
+```
+
+In order to compare models, we will split the data into train and test sets.
+```{r}
+# Split the data into train(2/3) and test (1/3) sets
+set.seed(15)
+# create a vector that is a sample of 1/3 of the data
+TestInd = sample(nrow(data.clean), nrow(data.clean)/3)
+# create the train and test sets
+train.clean <- data.clean[-TestInd,]
+test.clean <- data.clean[TestInd,]
+# check the dimensions of the train and test sets
+dim(train.clean) # 10257 x 43
+dim(test.clean) # 5128 x 43
+```
+
+# Part 2. Modeling methods using the training data
+
+## 1.Logistic regression
+
+Fit the full logistic regression model
+```{r}
+log.full <- glm(formula=survival_7_years ~ ., family=binomial("logit"), data=train.clean)
+# return the summary of the full logistic regression
+summary(log.full) # AIC: 12806
+# Plot the ROC of the model
+rocplot(log.full)
+```
+
+Create confusion matrix and calculate the accuracy of the full logistic regression model
+```{r}
+# extract the fitted.values
+xp=log.full$fitted.values
+# assign the fitted values to 0 and 1
+xp[xp>=0.5]=1
+xp[xp<0.5]=0
+# check that the length of the predicted and actuals match
+(c(xp=length(xp), actual=length(train.clean$survival_7_years)))
+# return the confusion matrix
+(conf.log.full <- table(pred=xp, true=train.clean$survival_7_years))
+# Return the accuracy
+(accuracy.log.full <- sum(conf.log.full[1,1],conf.log.full[2,2])/length(xp))
+```
+
+Predict on test set
+```{r, warning=FALSE}
+log.full.predict <- predict(log.full, newdata=test.clean,type="response")
+# extract the fpredicted values
+test.xp=log.full.predict
+# assign predictions to 0 and 1
+test.xp[test.xp>=0.5]=1
+test.xp[test.xp<0.5]=0
+# check that the length of the predicted and actuals match
+(c(test.xp=length(test.xp), actual=length(test.clean$survival_7_years)))
+# return the confusion matrix
+(conf.log.full.test <- table(pred=test.xp, true=test.clean$survival_7_years))
+# Return the accuracy
+(accuracy.log.full.test <- sum(conf.log.full.test[1,1],conf.log.full.test[2,2])/length(test.xp))
+```
+
+
+Create a smaller logistic regression model by decreasing the number of predictors
+```{r}
+# use drop1() to decide  which predictors to keep or drop
+drop.output <- drop1(log.full)
+drop.output$AIC
+variables.AIC <- cbind(var=colnames(data.clean[-ncol(data.clean)]),AIC=as.numeric(round(drop.output$AIC[-1])))
+# order the predictors by highest to lowest AIC
+sorted.variables.AIC <- variables.AIC[order(variables.AIC[,2], decreasing=TRUE),]
+sorted.variables.AIC
+# Keep the most important predictors
+imp.vars <- sorted.variables.AIC[1:19,1]
+# separate the variables with +'s for the formula
+vars <- paste(imp.vars, collapse = '+')
+# Create the formula for glm function
+form.small.log <- as.formula(paste('survival_7_years ~ ',vars))
+# Run logistic regression for smaller number of variables
+log.small.2 <- glm(formula=form.small.log, family=binomial("logit"),data=train.clean)
+# Return the summary of the small logistic regression model
+summary(log.small.2) # AIC: 12768
+
+```
+Create confustion matrix for the smaller model
+```{r}
+# extract the fitted.values
+xp=log.small.2$fitted.values
+xp[xp>=0.5]=1
+xp[xp<0.5]=0
+# check that the length of the predicted and actuals match
+(c(xp=length(xp), actual=length(train.clean$survival_7_years)))
+# return the confusion matrix
+(conf.log.small.2 <- table(pred=xp, true=train.clean$survival_7_years))
+# Return the accuracy
+(accuracy.log.small.train <- sum(conf.log.small.2[1,1],conf.log.small.2[2,2])/length(xp))
+```
+
+Predict on test set
+```{r, warning=FALSE}
+log.predict.2 <- predict(log.small.2, newdata=test.clean,type="response")
+# extract the fitted.values
+log.test.xp=log.predict.2
+log.test.xp[log.test.xp>=0.5]=1
+log.test.xp[log.test.xp<0.5]=0
+# check that the length of the predicted and actuals match
+(c(log.test.xp=length(log.test.xp), actual=length(test.clean$survival_7_years)))
+# return the confusion matrix
+(conf.log.small.2 <- table(pred=log.test.xp, true=test.clean$survival_7_years))
+# Return the accuracy
+(accuracy.log.small.test <- sum(conf.log.small.2[1,1],conf.log.small.2[2,2])/length(log.test.xp))
+```
+Comparing the performance of the two Logistic Regression models
+```{r}
+cbind(Full.AIC= 12806, Small.AIC=12768)
+cbind(Full.test.accur = accuracy.log.full.test, Small.test.accur= accuracy.log.small.test)
+```
+
+Here we see that the smaller logistic regression model reduced the AIC from the full logistic regression model. We also notice that using less variables results in an uptick in the test set accuracy.
+
+
+## 2.SVM
+
+We can also use support vector machines for this classification problem. We explore multiple kernels to see which predicts the data best.
+
+Linear Kernel
+```{r, warning=FALSE}
+# fit svm model using linear kernel on the clean training set
+model.svm.l <- svm(survival_7_years~., data=train.clean, kernel = "linear")
+# Use the model to predict on the clean test set
+pred.svm.l <- predict(model.svm.l, test.clean)
+# Assign classes to predictions
+pred.svm.l[pred.svm.l>=0.5]=1
+pred.svm.l[pred.svm.l<0.5]=0
+# Check that the number of predictions equals the number of responses in the test set
+(c(pred.svm.l=length(pred.svm.l), actual=length(test.clean$survival_7_years)))
+# Produce a confidence table of predicted vs actual
+(conf.svm.l <- table(pred=pred.svm.l, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.svm.l <- sum(conf.svm.l[1,1],conf.svm.l[2,2])/length(test.xp))
+
+```
+
+Polynomial Kernel with degree 2
+```{r, warning=FALSE}
+# fit svm model using polynomial kernel of degree 2 on the clean training set
+model.svm.p2 <- svm(survival_7_years~., data=train.clean, kernel = "polynomial", degree=2)
+# Use the model to predict on the clean test set
+pred.svm.p2 <- predict(model.svm.p2, test.clean)
+# Assign classes to predictions
+pred.svm.p2 [pred.svm.p2 >=0.5]=1
+pred.svm.p2 [pred.svm.p2 <0.5]=0
+# Check that the number of predictions equals the number of responses in the test set
+(c(pred.svm.p2 =length(pred.svm.p2 ), actual=length(test.clean$survival_7_years)))
+# Produce a confidence table of predicted vs actual
+(conf.svm.p2 <- table(pred=pred.svm.p2, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.svm.p2 <- sum(conf.svm.p2[1,1],conf.svm.p2[2,2])/length(test.xp))
+```
+
+Polynomial Kernel with degree 3
+```{r, warning=FALSE}
+# fit svm model using polynomial kernel of degree 3 on the clean training set
+model.svm.p3 <- svm(survival_7_years~., data=train.clean, kernel = "polynomial", degree=3)
+# Use the model to predict on the clean test set
+pred.svm.p3 <- predict(model.svm.p3, test.clean)
+# Assign classes to predictions
+pred.svm.p3 [pred.svm.p3 >=0.5]=1
+pred.svm.p3 [pred.svm.p3 <0.5]=0
+# Check that the number of predictions equals the number of responses in the test set
+(c(pred.svm.p3 =length(pred.svm.p3 ), actual=length(test.clean$survival_7_years)))
+# Produce a confidence table of predicted vs actual
+(conf.svm.p3 <- table(pred=pred.svm.p3, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.svm.p3 <- sum(conf.svm.p3[1,1],conf.svm.p3[2,2])/length(test.xp))
+```
+
+Radial Kernel
+```{r, warning=FALSE}
+# fit svm model with radial kernel
+model.svm.g <- svm(survival_7_years~., data=train.clean, kernel = "radial")
+# Use the model to predict on the clean test set
+pred.svm.g <- predict(model.svm.g, test.clean)
+# Assign classes to predictions
+pred.svm.g[pred.svm.g>=0.5]=1
+pred.svm.g[pred.svm.g<0.5]=0
+# Check that the number of predictions equals the number of responses in the test set
+(c(pred.svm.g=length(pred.svm.g), actual=length(test.clean$survival_7_years)))
+# Produce a confidence table of predicted vs actual
+(conf.svm.g <- table(pred=pred.svm.g, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.svm.g <- sum(conf.svm.g[1,1],conf.svm.g[2,2])/length(test.xp))
+```
+Here we can see that the radial kernel SVM model gave us the highest accuracy in the test set
+
+## 3. Decision Trees
+```{r}
+train.clean$survival_7_years <- as.factor(train.clean$survival_7_years)
+# set seed for reproducibility
+set.seed(15)
+# Fit a classification tree on the clean training set
+treeFit <- rpart(survival_7_years~., data=train.clean)
+# print the cp table, note the cross validation error (xerror)
+printcp(treeFit)
+# plot the cp values
+plotcp(treeFit)
+```
+Display the decision tree
+```{r}
+prp(treeFit,extra=1, # display prob of classes in the node
+    branch=.5, # change angle of branch lines
+    shadow.col="gray", # shadows under the leaves
+    branch.lty=3, # draw branches using dotted lines
+    split.cex=1.2, # make the split text larger than the node text
+    split.prefix="is ", # put "is " before split text
+    split.suffix="?", # put "?" after split text
+    split.box.col="lightgray", # lightgray split boxes (default is white)
+    split.border.col="darkgray", # darkgray border on split boxes
+    split.round=.5,
+    nn=TRUE) # display the node numbers, default is FALSE
+```
+From the visual representation of the tree, it is easy to see what are the three most important variables. Also, at which levels the tree creates the split. 
+
+Although, this tree is not overly complex, we will look to prune the tree where we find the lowest xerror, this is at the 3rd split. Afterwards, we will compare the predictions from the full tree and pruned tree on the test set.
+```{r}
+# find the best cp
+(best.CP = treeFit$cptable[which.min(treeFit$cptable[,"xerror"]),"CP"])
+# prune tree
+prunedTree <- prune(treeFit, cp = best.CP)
+printcp(prunedTree)
+# Display the pruned tree
+prp(prunedTree,extra=1, # display prob of classes in the node
+    branch=.5, # change angle of branch lines
+    shadow.col="gray", # shadows under the leaves
+    branch.lty=3, # draw branches using dotted lines
+    split.cex=1.2, # make the split text larger than the node text
+    split.prefix="is ", # put "is " before split text
+    split.suffix="?", # put "?" after split text
+    split.box.col="lightgray", # lightgray split boxes (default is white)
+    split.border.col="darkgray", # darkgray border on split boxes
+    split.round=.5)
+```
+
+Predictions using the full tree
+```{r, warning=FALSE}
+treepredict <- predict(treeFit, newdata=test.clean, type="prob")
+# assigning predictions to 0 and 1
+class = apply(treepredict,1,which.max)
+pred.tree <- class-1
+# return the head of predictions
+head(pred.tree)
+# Calculate the confusion matrix
+(conf.tree <- table(pred=pred.tree, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.tree <- sum(conf.tree[1,1],conf.tree[2,2])/length(pred.tree))
+```
+Predictions using the pruned tree
+```{r, warning=FALSE}
+treepredict.prune <- predict(prunedTree, test.clean, type="prob")
+head(treepredict.prune)
+# assigning predictions to 0 and 1
+# doesnt work when knitting
+class.prune = apply(treepredict.prune,1,which.max)
+pred.tree.prune <- class.prune-1
+# return the head of predictions
+head(pred.tree.prune)
+# Calculate the confusion matrix
+(conf.tree.prune <- table(pred=pred.tree.prune, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.tree.prune <- sum(conf.tree.prune[1,1],conf.tree.prune[2,2])/length(pred.tree.prune))
+```
+
+From the two decision trees, we can see that the final split adds value to our model. The full tree has a higher accuracy than the pruned tree model
+
+## 4. Random Forest 
+```{r}
+colnames(train.clean)
+# The response must be a factor when using randomForest package
+train.clean$survival_7_years <- as.factor(train.clean$survival_7_years)
+# Separate the test predictors
+X.test.clean <- test.clean[,-ncol(test.clean)]
+# Create a random forest model using the clean training data
+model.rf <- randomForest(survival_7_years~., data=train.clean, ntree=400)
+# Predictions on the clean test data
+rfPred <- predict(model.rf, newdata=X.test.clean, type="response")
+# Produce a confidence table of predicted vs actual
+head(rfPred)
+(conf.rf <- table(pred=rfPred, true=test.clean$survival_7_years))
+# Calculate the accuracy of predictions
+(accuracy.rf <- sum(conf.rf[1,1],conf.rf[2,2])/length(rfPred))
+```
+The accuracy for the random forest method is 0.637
+
+## 5.Gradient Boosting
+
+xgboost() needs the data in specific formats, so first we set up the data
+```{r}
+# xgboost needs the data in the form of matrices
+# use clean train and test sets, remove response
+xgbTrain <- data.matrix(train.clean[,-ncol(train.clean)])
+xgbTest <- data.matrix(test.clean[, -ncol(test.clean)])
+yTrain <- as.integer(train.clean$survival_7_years)-1
+yTest <- as.integer(test.clean$survival_7_years)-1
+```
+
+Fit the boosting model
+```{r}
+# first use cross validation to determine the ideal complexity parameter
+# set parameters
+param <- list("objective"="binary:logistic", 
+              "metrics" = "error")
+cv.nround=100
+cv.nfold=3
+set.seed(1)
+# use cross validation
+xgb.fit.cv=xgb.cv(params =param, data=xgbTrain, label=yTrain, 
+               nfold=cv.nfold, nrounds=cv.nround, verbose = FALSE)
+# save eval log in data frame
+eval.log <- as.data.frame(xgb.fit.cv$evaluation_log)
+# return the minimum error
+min(eval.log$test_error_mean)
+# check best iteration
+cv.min <- min(eval.log$test_error_mean)
+# return the number of rounds that gave the min error
+cv.min.rounds <- which(eval.log$test_error_mean == cv.min)  
+
+# Fit xgb model with the parameters given by cross validation to the training set
+xgb.fit <- xgboost(params = param, data = xgbTrain, 
+                   label = yTrain, nrounds = cv.min.rounds,verbose = FALSE)
+
+# Predictions from the tuned model on test set
+xgbPred <- predict(xgb.fit, xgbTest)
+# return head of predictions
+head(xgbPred)
+# assigning predictions to 0 and 1
+xgbPred[xgbPred >=0.5]=1
+xgbPred[xgbPred <0.5]=0
+# calculate confusion table
+(conf.xgb <- table(pred=xgbPred, true=yTest))
+# return the accuracy
+(accuracy.xgb <- sum(conf.xgb[1,1],conf.xgb[2,2])/length(xgbPred))
+```
+
+## 6. Ensemble model
+```{r}
+# transform random forest predictions to 0 and 1s
+rfPred1 <- as.numeric(rfPred)-1
+head(rfPred1)
+svm.g.1 <- as.numeric(pred.svm.g)
+head(svm.g.1)
+# combine all predictions
+all.preds <- cbind(Logistic=log.test.xp,SVM=svm.g.1,RandForest=rfPred1, ClassTree=pred.tree, xgboost=xgbPred)
+# create a vector using the majority rule of the models' predictions
+ensemble <- ifelse(rowSums(all.preds) >2,1,0)
+# combine all predictions
+all.preds <- cbind(all.preds, ensemble=ensemble)
+# display the head of all predictions
+head(all.preds)
+# calculate confusion table
+(conf.ens<- table(pred=ensemble, true=test.clean$survival_7_years))
+# return the accuracy
+(accuracy.ens <- sum(conf.ens[1,1],conf.ens[2,2])/length(ensemble))
+
+```
+
+
+## Comparsion and conclusions of model performance
+To solve the problem of modeling 7 year survival rates, we used 5 different modeling techniques on the training data set.
+We found that using the ensemble of 5 models gives us a slightly better accuracy (0.6447) than the best solo models (small logistic 0.6441 and SVM linear kernel 0.6441)
+
+```{r}
+model.accuracies <- data.frame(rbind(Full.Logistic=round(accuracy.log.full.test,4),Small.Logistic=round(accuracy.log.small.test,4),SVM.linear=round(accuracy.svm.l,4),SVM.Polynomial2=round(accuracy.svm.p2,4),SVM.Polynomial3=round(accuracy.svm.p3,4),SVM.Radial=round(accuracy.svm.g,4),Decision.Tree=round(accuracy.tree,4),Pruned.Tree=round(accuracy.tree.prune,4), Random.Forest=round(accuracy.rf,4), xgboost=round(accuracy.xgb,4), Ensemble=round(accuracy.ens,4)))
+colnames(model.accuracies) <-  c("Accuracy")
+print(model.accuracies)
+```
+
+
+
+# Part 3. Using the Scoring Data set
+
+## Impute missing values
+
+We will follow the same procedure to impute the missing values as we did for the training data set.
+```{r}
+dim(data.score) # 11531 x 33
+head(data.score)
+# Follow modifications made for training set
+# Remove the five columns: id, diagnosis_date, tumor_6_months psa_6_months and survival_1_year
+data.score.int <- data.score[,-c(1,2,18,21,32)]
+head(data.score.int) # 28 columns
+```
+
+We will expand the Symptoms column into a binary representation of each symptom, for each observation. Expanding the width of the data set.
+```{r}
+# change each cell to character
+data.score.int$symptoms <- as.character(data.score.int$symptoms)
+# create a vector of strings, each element is every symptom in the data set, length 32446
+symptoms.score <- unlist(strsplit(paste(data.score.int$symptoms, collapse = ","), ","))
+# select only the unique symptoms, store as a vector
+unique.symptoms.score <- unique(symptoms.score)
+# remove the "blank symptom" this is the case where the patient had no symptoms, different from NA
+unique.symptoms.score <- unique.symptoms.score[-which(unique.symptoms.score == "")] # 16 unique symptoms
+# create an empty matrix
+unique.symptoms.score.mat <- matrix(rep(0, 184496), nrow=nrow(data.score.int), ncol=length(unique.symptoms.score))
+# assign a unique symptom to each column of the empty matrix
+colnames(unique.symptoms.score.mat) <- unique.symptoms.score
+# bind the variable data with the newly expanded symptoms matrix
+data.score.int <- cbind(data.score.int, unique.symptoms.score.mat)
+# Check each observation's symptoms, if it matches a column, assign a 1, if not, assign a 0.
+for(z in 1:nrow(data.score.int)){
+    data.score.int[z, which(colnames(data.score.int) %in% strsplit(data.score.int$symptoms[z], ",")[[1]])] <- 1
+}
+# Return the head of the new intermediate dataset
+head(data.score.int)
+# remove the original symptoms column
+data.score.int <- data.score.int[,which(colnames(data.score.int)!="symptoms")]
+# remove the response variable
+data.unique.score <- data.score.int[,which(colnames(data.score.int)!="survival_7_years")]
+head(data.unique.score)
+
+```
+
+Now that we have expanded the variables and removed the ones that we do not want to use for prediction, we will impute the missing data using the mice() package.
+
+Impute using default methods (pmm for missing integers and logistic regression for missing factors)
+```{r}
+imputed_Data_unique.score <- mice(data.unique.score, m=5, printflag=FALSE, seed = 500, maxit=5)
+# Combine the first imputed set with the original data set as data.clean
+data.clean.score <- complete(imputed_Data_unique.score)
+head(data.clean.score)
+```
+
+
+## Generate predictions using all models 
+
+```{r, warning=FALSE}
+# Small logistic regression model predictions
+log.small.score <- predict(log.small.2, data.clean.score, type="response")
+# Return the summary of the small logistic regression model
+summary(log.small.score)
+# extract the fitted.values
+xp.log.s=log.small.score
+xp.log.s[xp.log.s>=0.5]=1
+xp.log.s[xp.log.s<0.5]=0
+
+# SVM radial predictions
+pred.svm.g.s <- predict(model.svm.g, data.clean.score)
+# Assign classes to predictions
+pred.svm.g.s[pred.svm.g.s>=0.5]=1
+pred.svm.g.s[pred.svm.g.s<0.5]=0
+
+# Random Forest predictions
+rfPred.s <- predict(model.rf, newdata=data.clean.score, type="response")
+length(rfPred.s)
+# Decision Tree predictions
+dTree.s <- predict(treeFit, newdata=data.clean.score)
+head(dTree.s)
+# assigning predictions to 0 and 1
+class.s= apply(dTree.s,1,which.max)
+pred.tree.s <- class.s-1
+# return the head of predictions
+head(pred.tree.s)
+# xgboost predictions
+
+xgbPred.s <- predict(xgb.fit, newdata=data.matrix(data.clean.score))
+# Assign classes to predictions
+xgbPred.s[xgbPred.s>=0.5]=1
+xgbPred.s[xgbPred.s<0.5]=0
+```
+
+## Ensemble the predictions
+
+```{r}
+# combine all predictions
+rfPred1.s <- as.numeric(rfPred.s)-1
+head(rfPred1.s)
+svm.g.1.s <- as.numeric(pred.svm.g.s)
+all.preds.s <- cbind(Logistic=xp.log.s,SVM=svm.g.1.s, RandForest = rfPred1.s, DecTree = pred.tree.s, xgboost=xgbPred.s)
+head(all.preds.s)
+ensemble.score <- ifelse(rowSums(all.preds.s) >2,1,0)
+
+head(ensemble.score)
+ensemble.predicts <- cbind(all.preds.s, ensemble=ensemble.score)
+head(ensemble.predicts,10)
+```
+
+## Prepare .csv for submission
+
+```{r}
+data.score<-read.csv(file=paste(datapath,"(name)_score.csv",sep="/"))
+data.score$survival_7_years <- ensemble.score
+head(data.score)
+#write.csv(data.score, file="Navarro_score.csv")
+```
+
+
+
+
+
+
+
+
+
+
